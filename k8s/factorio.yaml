@@ -111,6 +111,20 @@ spec:
             # player then needs the DLC.
             - name: DLC_SPACE_AGE
               value: "false"
+            # Update installed mods to match the server version on every boot.
+            # Needs factorio.com creds (Secret) or the server refuses to start.
+            - name: UPDATE_MODS_ON_START
+              value: "true"
+            - name: USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: factorio-secrets
+                  key: USERNAME
+            - name: TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: factorio-secrets
+                  key: TOKEN
             - name: PORT
               value: "34197"
             - name: RCON_PORT
