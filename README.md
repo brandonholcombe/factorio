@@ -21,11 +21,11 @@ Join password: in `k8s/factorio-secret.yaml` (gitignored, never committed).
   `factorio.kodloki.io` is an A record on the node's public IP
   (`172.234.239.122`), not the ingress LoadBalancer. If the games node is ever
   recycled, update the DNS record.
-- Base game (no Space Age). The image ships the DLC mods enabled by default,
-  so the `factorio-mods` ConfigMap explicitly disables them (an initContainer
-  installs `mod-list.json` every boot). To flip Space Age later: set the three
-  DLC mods to `true` in the ConfigMap, commit, restart — the existing save
-  migrates (that direction is supported; disabling again is lossy).
+- Base game (no Space Age). The image enables the DLC mods by default — its
+  entrypoint rewrites `mod-list.json` on every boot from the `DLC_SPACE_AGE`
+  env var, so the Deployment sets `DLC_SPACE_AGE=false`. To flip Space Age
+  later: set it to `"true"`, commit, restart — the existing save migrates
+  (that direction is supported; disabling again is lossy).
 - Settings live in the Secret as `server-settings.json`; an initContainer
   re-installs it on every boot. To change settings: edit the Secret, apply,
   `kubectl rollout restart deployment/factorio -n factorio`.
