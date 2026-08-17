@@ -29,6 +29,26 @@ spec:
     requests:
       storage: 10Gi
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: factorio-mods
+  namespace: factorio
+data:
+  # The image SHIPS the Space Age mods enabled by default — base-game clients
+  # get a "mods not synced" error unless they're disabled here. To flip Space
+  # Age on later (same save migrates): set the three DLC mods to true, commit,
+  # and restart. Players then need the DLC.
+  mod-list.json: |
+    {
+      "mods": [
+        { "name": "base", "enabled": true },
+        { "name": "elevated-rails", "enabled": false },
+        { "name": "quality", "enabled": false },
+        { "name": "space-age", "enabled": false }
+      ]
+    }
+---
 # NOTE: the Secret (factorio-secrets, holding server-settings.json with the
 # game password) lives in factorio-secret.yaml, which is gitignored so the
 # password never hits the public repo. Apply it separately:
@@ -74,8 +94,8 @@ spec:
       # Factorio saves the map on SIGTERM; give it time on a big map.
       terminationGracePeriodSeconds: 120
       initContainers:
-        # Re-copy server-settings.json from the Secret every boot so settings
-        # stay declarative (edit Secret -> restart, no PVC surgery).
+        # Re-copy server-settings.json (Secret) and mod-list.json (ConfigMap)
+        # every boot so both stay declarative (edit + restart, no PVC surgery).
         - name: install-settings
           image: alpine:3.20
           command:
@@ -83,15 +103,19 @@ spec:
             - -c
             - |
               set -eu
-              mkdir -p /factorio/config
+              mkdir -p /factorio/config /factorio/mods
               cp /secrets/server-settings.json /factorio/config/server-settings.json
-              chown 845:845 /factorio/config/server-settings.json
-              echo "server-settings.json installed"
+              cp /mods-config/mod-list.json /factorio/mods/mod-list.json
+              chown 845:845 /factorio/config/server-settings.json /factorio/mods/mod-list.json
+              echo "server-settings.json + mod-list.json installed"
           volumeMounts:
             - name: data
               mountPath: /factorio
             - name: settings
               mountPath: /secrets
+              readOnly: true
+            - name: mods-config
+              mountPath: /mods-config
               readOnly: true
       containers:
         - name: factorio
@@ -155,5 +179,8 @@ spec:
         - name: settings
           secret:
             secretName: factorio-secrets
+        - name: mods-config
+          configMap:
+            name: factorio-mods
 # No Service: the container is exposed directly on the node via hostPort
 # (34197/udp). factorio.kodloki.io is an A record on the node's public IP.
