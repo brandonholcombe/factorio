@@ -32,6 +32,23 @@ Join password: in `k8s/factorio-secret.yaml` (gitignored, never committed).
 - GitOps: ArgoCD watches `k8s/` on GitHub (`argocd-application.yaml` applied
   once by hand; the Secret is applied by hand).
 
+## Mods (QoL only)
+
+Installed on the `factorio-data` PVC under `/factorio/mods/` (clients
+auto-download them on join): Squeak Through 2, Bottleneck Lite,
+Rate Calculator (+flib), Even Distribution, Milestones, Todo List — the
+newest Factorio-2.0-compatible releases.
+
+**Mod auto-update** (recommended before the 2.1-stable jump): the image can
+update mods on every boot, but needs factorio.com credentials or the server
+refuses to start. Add `USERNAME` and `TOKEN` (from factorio.com/profile, or
+`service-username`/`service-token` in the local `player-data.json`) to the
+`stringData` of `k8s/factorio-secret.yaml`, apply it, then set
+`UPDATE_MODS_ON_START: "true"` env in the Deployment with
+`valueFrom: secretKeyRef` for `USERNAME`/`TOKEN`. Until then, mods are pinned
+at the installed versions; if a server update ever breaks them, the pod
+crash-loops until the mods are updated or removed.
+
 ## Auto-update (every 30 min)
 
 `factorio-updater` CronJob compares the Docker Hub `stable` tag digest to the
