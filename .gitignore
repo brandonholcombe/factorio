@@ -1,0 +1,3 @@
+k8s/factorio-secret.yaml
+backups/
+.DS_Store

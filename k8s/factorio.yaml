@@ -1,0 +1,159 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: factorio
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: factorio-data
+  namespace: factorio
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: linode-block-storage-retain
+  resources:
+    requests:
+      storage: 10Gi          # game data + saves + mods; saves are a few MB each
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: factorio-backups
+  namespace: factorio
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: linode-block-storage-retain
+  resources:
+    requests:
+      storage: 10Gi
+---
+# NOTE: the Secret (factorio-secrets, holding server-settings.json with the
+# game password) lives in factorio-secret.yaml, which is gitignored so the
+# password never hits the public repo. Apply it separately:
+#   kubectl apply -f k8s/factorio-secret.yaml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: factorio
+  namespace: factorio
+  labels:
+    app: factorio
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate           # block storage is RWO + hostPort; never two pods
+  selector:
+    matchLabels:
+      app: factorio
+  template:
+    metadata:
+      labels:
+        app: factorio
+    spec:
+      # Pin to the 16GB g6-standard-6 games node (tainted dedicated=terraria),
+      # same as palworld, so the hostPort always binds the same public IP
+      # (172.234.239.122) that factorio.kodloki.io points at.
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: terraria
+          effect: NoSchedule
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node.kubernetes.io/instance-type
+                    operator: In
+                    values: ["g6-standard-6"]
+      securityContext:
+        fsGroup: 845           # the image's factorio uid/gid
+      # Factorio saves the map on SIGTERM; give it time on a big map.
+      terminationGracePeriodSeconds: 120
+      initContainers:
+        # Re-copy server-settings.json from the Secret every boot so settings
+        # stay declarative (edit Secret -> restart, no PVC surgery).
+        - name: install-settings
+          image: alpine:3.20
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              mkdir -p /factorio/config
+              cp /secrets/server-settings.json /factorio/config/server-settings.json
+              chown 845:845 /factorio/config/server-settings.json
+              echo "server-settings.json installed"
+          volumeMounts:
+            - name: data
+              mountPath: /factorio
+            - name: settings
+              mountPath: /secrets
+              readOnly: true
+      containers:
+        - name: factorio
+          # The stable tag moves; imagePullPolicy Always + the updater CronJob
+          # (factorio-updater.yaml) together provide auto-update. Clients on
+          # Steam update automatically, so the server must track stable too or
+          # updated clients can no longer join.
+          image: factoriotools/factorio:stable
+          imagePullPolicy: Always
+          env:
+            - name: PORT
+              value: "34197"
+            - name: RCON_PORT
+              value: "27015"
+            - name: SAVE_NAME
+              value: "kodloki"
+            - name: GENERATE_NEW_SAVE
+              value: "true"      # only generates if no save exists
+            - name: LOAD_LATEST_SAVE
+              value: "true"
+          ports:
+            # hostPort exposes the game directly on the node's public IP at the
+            # STANDARD port 34197 — Linode NodeBalancers can't forward UDP, so
+            # this is the only LB-free path (same pattern as palworld). Recreate
+            # strategy guarantees the old pod frees the port first.
+            - name: game
+              containerPort: 34197
+              hostPort: 34197
+              protocol: UDP
+            # RCON stays cluster-internal (no hostPort). No clash with
+            # palworld's 27015, which is UDP and host-bound; this is TCP.
+            - name: rcon
+              containerPort: 27015
+              protocol: TCP
+          volumeMounts:
+            - name: data
+              mountPath: /factorio
+          resources:
+            requests:
+              cpu: "1"
+              memory: "2Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+          # RCON only opens once the sim is up, so it doubles as the readiness
+          # signal. First boot generates the map — allow a few minutes.
+          startupProbe:
+            tcpSocket:
+              port: 27015
+            periodSeconds: 10
+            failureThreshold: 30   # ~5 min grace for map generation
+          livenessProbe:
+            tcpSocket:
+              port: 27015
+            periodSeconds: 30
+            failureThreshold: 4
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: factorio-data
+        - name: settings
+          secret:
+            secretName: factorio-secrets
+# No Service: the container is exposed directly on the node via hostPort
+# (34197/udp). factorio.kodloki.io is an A record on the node's public IP.

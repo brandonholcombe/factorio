@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: factorio
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/brandonholcombe/factorio.git
+    targetRevision: HEAD
+    path: k8s
+    directory:
+      # The Secret and this Application manifest are not part of the synced set:
+      # the Secret is gitignored (never committed); the Application bootstraps
+      # ArgoCD itself and is applied once by hand.
+      exclude: "argocd-application.yaml"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: factorio
+  revisionHistoryLimit: 3
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

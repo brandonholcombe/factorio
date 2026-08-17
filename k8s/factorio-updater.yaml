@@ -1,0 +1,104 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: factorio-updater
+  namespace: factorio
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: factorio-updater
+  namespace: factorio
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: factorio-updater
+  namespace: factorio
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: factorio-updater
+subjects:
+  - kind: ServiceAccount
+    name: factorio-updater
+    namespace: factorio
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: factorio-updater
+  namespace: factorio
+  labels:
+    app: factorio
+    component: updater
+spec:
+  schedule: "*/30 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 900
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 300
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app: factorio-updater
+            component: updater
+        spec:
+          serviceAccountName: factorio-updater
+          containers:
+            - name: updater
+              image: alpine/k8s:1.34.9   # kubectl + curl + jq
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  # Compare the Docker Hub `stable` tag digest against the
+                  # digest the running pod was pulled from. Comparing image
+                  # digests (not factorio.com version numbers) avoids a restart
+                  # loop in the window where factorio.com has released but the
+                  # Docker image hasn't been rebuilt yet.
+                  latest=$(curl -fsSL --max-time 30 \
+                    "https://hub.docker.com/v2/repositories/factoriotools/factorio/tags/stable" \
+                    | jq -r '.digest // empty')
+                  if [ -z "${latest}" ]; then
+                    echo "could not read stable digest from Docker Hub; skipping" >&2
+                    exit 0
+                  fi
+                  imageid=$(kubectl get pods -n factorio -l app=factorio \
+                    --field-selector=status.phase=Running \
+                    -o jsonpath='{.items[0].status.containerStatuses[0].imageID}' 2>/dev/null || true)
+                  if [ -z "${imageid}" ]; then
+                    echo "no running factorio pod; skipping"
+                    exit 0
+                  fi
+                  running="sha256:${imageid##*sha256:}"
+                  echo "hub stable: ${latest}"
+                  echo "running:    ${running}"
+                  if [ "${latest}" = "${running}" ]; then
+                    echo "up to date"
+                    exit 0
+                  fi
+                  echo "new stable image available -> rolling restart"
+                  # imagePullPolicy: Always pulls the new image; the server
+                  # saves on SIGTERM before the new pod starts.
+                  kubectl rollout restart deployment/factorio -n factorio
+              resources:
+                requests:
+                  cpu: "0"
+                  memory: "64Mi"
+                limits:
+                  cpu: "250m"
+                  memory: "256Mi"
+          restartPolicy: Never

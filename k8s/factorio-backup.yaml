@@ -1,0 +1,94 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: factorio-backup
+  namespace: factorio
+  labels:
+    app: factorio
+    component: backups
+spec:
+  schedule: "15 */6 * * *"        # 4x/day; save copies are a few MB
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 600
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app: factorio-backup
+            component: backups
+        spec:
+          # Both PVCs are RWO block storage attached to the games node, so the
+          # job must land on the same node as the game pod (eloup pattern).
+          affinity:
+            podAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                    matchLabels:
+                      app: factorio
+                  topologyKey: kubernetes.io/hostname
+          tolerations:
+            - key: dedicated
+              operator: Equal
+              value: terraria
+              effect: NoSchedule
+          securityContext:
+            fsGroup: 845
+            runAsUser: 845
+            runAsNonRoot: true
+          containers:
+            - name: backup
+              image: alpine:3.20
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  ts=$(date -u +%Y%m%dT%H%M%SZ)
+                  dest="/backups/${ts}"
+                  # Factorio autosaves atomically (write-temp-then-rename), so
+                  # a plain cp of the .zip files is safe while the server runs.
+                  set -- /data/saves/*.zip
+                  if [ ! -e "$1" ]; then
+                    echo "no save files yet; nothing to back up"
+                    exit 0
+                  fi
+                  mkdir -p "${dest}"
+                  cp "$@" "${dest}/"
+                  echo "backed up $# save(s) to ${dest}:"
+                  ls -l "${dest}"
+                  # Retention: keep the 28 newest snapshot dirs (~1 week at 4/day).
+                  # Timestamps are colon-free + lexically sortable.
+                  ls -1d /backups/*/ | sort -r | tail -n +29 | while read -r old; do
+                    echo "pruning ${old}"
+                    rm -rf "${old}"
+                  done
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: "0"
+                  memory: "64Mi"
+                limits:
+                  cpu: "250m"
+                  memory: "256Mi"
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+                  readOnly: true
+                - name: backups
+                  mountPath: /backups
+          restartPolicy: OnFailure
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: factorio-data
+            - name: backups
+              persistentVolumeClaim:
+                claimName: factorio-backups
