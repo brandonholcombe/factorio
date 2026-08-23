@@ -56,7 +56,7 @@ metadata:
 data:
   # Discord channel the bot alerts in and listens to (Dev Mode -> Copy ID).
   # "0" keeps the bridge in headless mode (alerts to logs only).
-  DISCORD_CHANNEL_ID: "0"
+  DISCORD_CHANNEL_ID: "1283531892259426355"
   POLL_INTERVAL_S: "10"
   QUIET_GAP_S: "120"
   WAVE_ALERT_THRESHOLD: "25"
