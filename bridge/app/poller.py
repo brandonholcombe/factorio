@@ -117,16 +117,17 @@ class Poller:
             k = sdata.get("kills")
             kills[sname] = k if isinstance(k, dict) else {}
 
-        self._track_ups(data, now)
+        idle = config.GAME_AUTO_PAUSE and not players and not data["paused"]
+        self._track_ups(data, now, idle)
         self._track_kills(kills, players, now)
         self._track_players(players)
         self._track_rockets(data)
         self._track_research(data)
         self._track_evolution(surfaces)
-        self._track_power(surfaces, data["paused"])
+        self._track_power(surfaces, data["paused"] or idle)
 
         self.snapshot = {
-            "at": now, "tick": data["tick"], "paused": data["paused"],
+            "at": now, "tick": data["tick"], "paused": data["paused"], "idle": idle,
             "players": sorted(players), "rockets": data.get("rockets", 0),
             "evolution": {s: d.get("evolution", 0.0) for s, d in surfaces.items()},
             "research": data.get("research"),
@@ -136,12 +137,14 @@ class Poller:
             "ups": self.ups,
         }
 
-    def _track_ups(self, data: dict, now: float) -> None:
-        if self._prev_tick is not None and self._prev_wall is not None and not data["paused"]:
+    def _track_ups(self, data: dict, now: float, idle: bool) -> None:
+        effectively_paused = data["paused"] or idle
+        if (self._prev_tick is not None and self._prev_wall is not None
+                and not effectively_paused):
             dt = now - self._prev_wall
             if dt > 0:
                 self.ups = max(0.0, (data["tick"] - self._prev_tick) / dt)
-        elif data["paused"]:
+        elif effectively_paused:
             self.ups = None
         self._prev_tick, self._prev_wall = data["tick"], now
 

@@ -182,7 +182,12 @@ class BridgeBot(discord.Client):
             players = ", ".join(s["players"]) or "nobody"
             ups = f"{s['ups']:.0f}" if s.get("ups") else "—"
             evo = ", ".join(f"{k}: {v:.0%}" for k, v in s["evolution"].items())
-            state = "⏸️ paused" if s["paused"] else "▶️ running"
+            if s["paused"]:
+                state = "⏸️ paused"
+            elif s.get("idle"):
+                state = "💤 idle (auto-paused, nobody on)"
+            else:
+                state = "▶️ running"
             lines = [
                 f"{state} | 👥 {players} | UPS {ups} | 🚀 {s['rockets']} | 🧬 {evo}",
                 f"(data {age}s old)",

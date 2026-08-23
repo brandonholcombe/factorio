@@ -45,6 +45,11 @@ AUTO_PAUSE_ON_BREACH = os.environ.get("AUTO_PAUSE_ON_BREACH", "true").lower() ==
 
 ALERT_JOINS = os.environ.get("ALERT_JOINS", "true").lower() == "true"
 
+# Mirrors the game's auto_pause server setting: with it on, an empty server
+# freezes ticks WITHOUT setting game.tick_paused, which must not read as
+# 0 UPS. Flip this together with auto_pause at the 24/7 switch.
+GAME_AUTO_PAUSE = os.environ.get("GAME_AUTO_PAUSE", "true").lower() == "true"
+
 # Health alerts: sustained-condition thresholds (polls are POLL_INTERVAL_S apart).
 UPS_ALERT_BELOW = float(os.environ.get("UPS_ALERT_BELOW", "55"))
 UPS_ALERT_POLLS = int(os.environ.get("UPS_ALERT_POLLS", "6"))       # ~1 min

@@ -62,6 +62,8 @@ data:
   WAVE_ALERT_THRESHOLD: "25"
   AUTO_PAUSE_ON_BREACH: "true"
   ALERT_JOINS: "true"
+  # Mirror of the game's auto_pause setting — flip BOTH at the 24/7 switch.
+  GAME_AUTO_PAUSE: "true"
   DIGEST_HOUR_UTC: "15"   # 8am Pacific
   # Losses of these are "normal combat" (waves). Anything else destroyed by
   # the enemy force is a breach. Append DLC turret types here at the Space
@@ -108,7 +110,7 @@ spec:
         fsGroup: 845
       containers:
         - name: bridge
-          image: bholcombe/factorio-bridge:4
+          image: bholcombe/factorio-bridge:5
           envFrom:
             - configMapRef:
                 name: factorio-bridge-config
