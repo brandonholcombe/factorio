@@ -64,7 +64,7 @@ class IncidentEngine:
 
     @staticmethod
     def classify(name: str) -> str:
-        if name in config.IGNORED_ENTITIES:
+        if name in config.IGNORED_ENTITIES or name.startswith(config.IGNORED_PREFIXES):
             return "ignored"
         if name == config.CHARACTER_ENTITY:
             return "character"

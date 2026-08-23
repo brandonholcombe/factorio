@@ -23,7 +23,17 @@ DEFENSE_ENTITIES = _set(
     "artillery-turret,radar,land-mine",
 )
 # Names ignored entirely (enemy-force kills of things nobody mourns).
-IGNORED_ENTITIES = _set("IGNORED_ENTITIES", "tree,cliff,fish")
+IGNORED_ENTITIES = _set("IGNORED_ENTITIES", "cliff,fish")
+# Prefix matches for the same (real names are tree-04, rock-huge, small-biter,
+# biter-spawner, medium-worm-turret, …). Covers enemy friendly-fire on their
+# own units/nests and destructible scenery.
+IGNORED_PREFIXES = tuple(_set(
+    "IGNORED_PREFIXES",
+    "tree,dead-,dry-,doomed-,rock-,sand-rock,huge-rock,big-rock,"
+    "small-biter,medium-biter,big-biter,behemoth-biter,"
+    "small-spitter,medium-spitter,big-spitter,behemoth-spitter,"
+    "biter-spawner,spitter-spawner,small-worm,medium-worm,big-worm,behemoth-worm",
+))
 CHARACTER_ENTITY = "character"
 
 # A wave/incident closes after this many seconds without new losses.

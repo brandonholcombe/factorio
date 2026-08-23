@@ -66,8 +66,8 @@ data:
   # Losses of these are "normal combat" (waves). Anything else destroyed by
   # the enemy force is a breach. Append DLC turret types here at the Space
   # Age flip (unknown names alarm rather than stay silent, by design).
-  DEFENSE_ENTITIES: "stone-wall,gate,gun-turret,laser-turret,flamethrower-turret,artillery-turret,radar,land-mine"
-  IGNORED_ENTITIES: "tree,cliff,fish"
+  DEFENSE_ENTITIES: "stone-wall,gate,gun-turret,laser-turret,flamethrower-turret,artillery-turret,radar,land-mine,defender,distractor,destroyer"
+  IGNORED_ENTITIES: "cliff,fish"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -108,7 +108,7 @@ spec:
         fsGroup: 845
       containers:
         - name: bridge
-          image: bholcombe/factorio-bridge:1
+          image: bholcombe/factorio-bridge:2
           envFrom:
             - configMapRef:
                 name: factorio-bridge-config
