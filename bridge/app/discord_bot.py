@@ -130,6 +130,21 @@ class BridgeBot(discord.Client):
         def right_channel(itx: discord.Interaction) -> bool:
             return itx.channel_id == config.DISCORD_CHANNEL_ID
 
+        @tree.command(name="help", description="List the factory bot's commands")
+        async def help_cmd(itx: discord.Interaction):
+            await itx.response.send_message(
+                "🏭 **Factory Overseer commands**\n"
+                "• `/status` — server state: players, UPS, evolution, rockets, last breach\n"
+                "• `/save` — save the map right now\n"
+                "• `/pause` / `/resume` — freeze or resume the world (resume also clears a breach auto-pause)\n"
+                "• `/rollback <5|10|15|20|25>` — restore an earlier autosave "
+                "(disconnects players; asks for confirmation; archives current state first)\n"
+                "• `/help` — this list\n\n"
+                "I also post automatically: breach alerts (with auto-pause when nobody's "
+                "online), heavy-wave summaries, player joins/leaves & deaths, server "
+                "down/up, and a daily digest.",
+                ephemeral=True)
+
         @tree.command(name="status", description="Factorio server status")
         async def status(itx: discord.Interaction):
             if not right_channel(itx):
