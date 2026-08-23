@@ -1,7 +1,9 @@
 # factorio
 
 Private Factorio server for friends (up to ~15 concurrent) on the kodloki LKE
-cluster (`tow-c1`), following the palworld game-server pattern.
+cluster (`tow-c1`), plus **factorio-bridge**: a monitoring/control sidecar
+service with a Discord bot ("KL-Factorio-Overseer"), damage-tolerance alerts,
+auto-pause, and save rollback.
 
 ## Connecting
 
@@ -12,97 +14,166 @@ factorio.kodloki.io:34197
 ```
 
 Join password: in `k8s/factorio-secret.yaml` (gitignored, never committed).
+No mod installs needed — the server's QoL mods auto-sync to clients on join.
 
-## How it runs
+## Architecture
 
-- `factoriotools/factorio:stable` on the g6-standard-6 games node, pinned there
-  (toleration + nodeAffinity) because the game is exposed via **hostPort
-  34197/udp** — Linode NodeBalancers can't forward UDP, so
-  `factorio.kodloki.io` is an A record on the node's public IP
-  (`172.234.239.122`), not the ingress LoadBalancer. If the games node is ever
-  recycled, update the DNS record.
-- Base game (no Space Age). The image enables the DLC mods by default — its
-  entrypoint rewrites `mod-list.json` on every boot from the `DLC_SPACE_AGE`
-  env var, so the Deployment sets `DLC_SPACE_AGE=false`. To flip Space Age
-  later: set it to `"true"`, commit, restart — the existing save migrates
-  (that direction is supported; disabling again is lossy).
+```
+friends ──UDP 34197──▶ games node public IP (172.234.239.122, hostPort)
+                          │  factorio  (factoriotools/factorio:stable)
+Discord ◀──gateway──  factorio-bridge (bholcombe/factorio-bridge)
+                          │  └─ RCON poll (10s vitals, 5min resource scan)
+                          └─ shared PVCs: factorio-data, factorio-backups
+```
+
+- **Why hostPort + node-IP DNS**: Linode NodeBalancers can't forward UDP, so
+  `factorio.kodloki.io` is an A record on the games node itself (same pattern
+  as palworld). If that node is ever recycled, update the DNS record.
+- Server and bridge are pinned to the g6-standard-6 games node (toleration
+  `dedicated=terraria` + instance-type affinity): the RWO block-storage
+  volumes and the hostPort live there.
+- **GitOps**: ArgoCD app `factorio` watches `k8s/` on GitHub.
+  `argocd-application.yaml` and the Secret are hand-applied (the Application
+  ignores the game Deployment's `/spec/replicas` so the bridge may scale it
+  during rollbacks).
+- Canonical repo: `github.com/brandonholcombe/factorio` (watched by ArgoCD).
+  Mirror: `haxley.luckyenough.us/brandonw.h2o/factorio`.
+
+## Game server
+
+- Base game, vanilla map, `DLC_SPACE_AGE=false` (the image force-manages
+  `mod-list.json` from that env — see Space Age below).
+- QoL mods (auto-synced to clients): Squeak Through 2, Bottleneck Lite,
+  Rate Calculator (+flib), Even Distribution, Milestones, Todo List.
 - Settings live in the Secret as `server-settings.json`; an initContainer
-  re-installs it on every boot. To change settings: edit the Secret, apply,
-  `kubectl rollout restart deployment/factorio -n factorio`.
-- GitOps: ArgoCD watches `k8s/` on GitHub (`argocd-application.yaml` applied
-  once by hand; the Secret is applied by hand).
+  installs it (and the fixed RCON password) on every boot. Edit Secret →
+  `kubectl apply` → `kubectl rollout restart deployment/factorio -n factorio`.
+- `auto_pause: true` — world freezes when empty (24/7 mode planned after the
+  monitoring shakedown; flip `auto_pause` AND the bridge's `GAME_AUTO_PAUSE`
+  together).
+- **Server auto-update**: CronJob every 30 min compares the Docker Hub
+  `stable` tag digest to the running pod and rolling-restarts on change
+  (digest compare avoids restart loops while Docker Hub lags factorio.com).
+  Steam auto-updates clients, so the server must track stable.
+- **Mod auto-update**: `UPDATE_MODS_ON_START=true` with factorio.com creds
+  (`USERNAME`/`TOKEN` in the Secret) — mods re-sync to the server version on
+  every boot, keeping them in lockstep across game updates.
+- **Backups**: CronJob every 6h copies `saves/*.zip` to the
+  `factorio-backups` volume, keeping 28 snapshots (~1 week).
 
-## Mods (QoL only)
+## Discord bot (#assembly-line)
 
-Installed on the `factorio-data` PVC under `/factorio/mods/` (clients
-auto-download them on join): Squeak Through 2, Bottleneck Lite,
-Rate Calculator (+flib), Even Distribution, Milestones, Todo List — the
-newest Factorio-2.0-compatible releases.
+Commands (`/help` in-channel lists these too):
 
-**Mod auto-update** (recommended before the 2.1-stable jump): the image can
-update mods on every boot, but needs factorio.com credentials or the server
-refuses to start. Add `USERNAME` and `TOKEN` (from factorio.com/profile, or
-`service-username`/`service-token` in the local `player-data.json`) to the
-`stringData` of `k8s/factorio-secret.yaml`, apply it, then set
-`UPDATE_MODS_ON_START: "true"` env in the Deployment with
-`valueFrom: secretKeyRef` for `USERNAME`/`TOKEN`. Until then, mods are pinned
-at the installed versions; if a server update ever breaks them, the pod
-crash-loops until the mods are updated or removed.
+| command | what it does |
+|---|---|
+| `/status` | run/idle/paused, players, UPS, evolution, rockets, last breach |
+| `/report` | last-24h digest on demand |
+| `/incidents` | recent attacks/breaches from the incident DB |
+| `/production [item]` | top-10 rates last minute, or one item over 1m/10m/1h |
+| `/research` | current tech + progress bar |
+| `/resources` | tapped ore vs peak, worst first (see below) |
+| `/saves` | saves on the server with ages (rollback targets) |
+| `/save` | save the map now |
+| `/pause` / `/resume` | freeze/resume the world (resume clears auto-pause) |
+| `/rollback 5..25` | confirm-button restore of the closest autosave |
 
-## Auto-update (every 30 min)
+Automatic posts: joins/leaves, player deaths, heavy-wave summaries, breach
+alerts, server down/up, rocket launches, research completions, evolution
+threshold crossings (25/50/75/90%), sustained UPS < 55, brownouts,
+tapped-resource low warnings, and a daily digest (8am Pacific).
 
-`factorio-updater` CronJob compares the Docker Hub `stable` tag digest to the
-running pod's image digest and does a `rollout restart` when they differ.
-Rationale: Steam auto-updates clients, so a stale server locks everyone out.
-The restart saves the map first (SIGTERM save + 5-min autosaves); players
-reconnect after ~1 minute.
+### Damage tolerance model
 
-## Backups (every 6 h)
+The bridge polls enemy kill-count deltas (per surface) every 10s and
+classifies destroyed entities:
 
-`factorio-backup` CronJob copies `/factorio/saves/*.zip` to the
-`factorio-backups` PVC under a UTC-timestamp directory, keeping the 28 newest
-(~1 week). Restore = copy a snapshot's zip back into `/factorio/saves/` (e.g.
-via `kubectl cp` or a one-shot pod mounting both PVCs) and restart with
-`LOAD_LATEST_SAVE` semantics in mind (it loads the newest mtime).
+- **defense** (walls/turrets/gates… — `DEFENSE_ENTITIES` in the ConfigMap):
+  normal wave chatter. Digest-only unless one wave exceeds
+  `WAVE_ALERT_THRESHOLD`.
+- **production** (anything else): **breach** — immediate alert, and if nobody
+  is online the bridge auto-pauses the world (`/resume` to clear).
+- Unknown entity names alarm rather than stay silent (safe default for the
+  Space Age flip); trees/rocks/biter friendly-fire are prefix-ignored.
 
-Run either job on demand:
+### Rollback
 
-```sh
-kubectl create job --from=cronjob/factorio-backup  backup-now  -n factorio
-kubectl create job --from=cronjob/factorio-updater update-now -n factorio
+`/rollback N` archives all current saves to the backups volume
+(`pre-rollback-<ts>/`), scales the game to 0, copies the autosave closest to
+N minutes old over `kodloki.zip`, scales back up. ~2 min of downtime;
+disconnected players rejoin.
+
+### Tapped-resource alerts
+
+Every 5 min the bridge sums ore within reach of every mining drill
+(tile-deduped), tracks the **peak** per resource per surface in SQLite, and
+alerts once when a resource falls below `RESOURCE_ALERT_PCT` (20%) of peak —
+re-arming when a new patch is tapped. Peak means "since tracking began";
+originals aren't retroactively knowable. Infinite resources (oil) are
+display-only.
+
+## Repo layout
+
+```
+bridge/            bridge service (Python 3.12; deps: discord.py)
+  app/main.py        wiring; headless mode if no bot token
+  app/poller.py      RCON vitals loop, resource scan, control commands
+  app/incidents.py   tolerance model, SQLite history, digests
+  app/discord_bot.py bot commands + alert rendering
+  app/rollback.py    save-swap orchestration
+  app/k8s.py         minimal in-cluster API client (scale + pod watch)
+  app/rcon.py        minimal Source-RCON client
+k8s/               manifests (ArgoCD-synced except the two hand-applied ones)
+  factorio.yaml            namespace, PVCs, game Deployment
+  factorio-bridge.yaml     bridge Deployment, SA/RBAC, rcon Service, ConfigMap
+  factorio-backup.yaml     6-hourly save backups
+  factorio-updater.yaml    30-min server image auto-update
+  factorio-secret.yaml     GITIGNORED: passwords, tokens, server-settings
+  argocd-application.yaml  hand-applied Application (replicas ignored)
 ```
 
-## Bridge: monitoring, Discord alerts + control
-
-`bridge/` (image `bholcombe/factorio-bridge`) polls RCON every 10s and turns
-enemy kill-count deltas into a tolerance model: **defense** entities lost
-(walls/turrets, list in the `factorio-bridge-config` ConfigMap) are normal
-waves — digest-only unless a wave exceeds the alert threshold; anything else
-destroyed is a **breach** — immediate alert, and auto-pause if nobody is
-online. Incident history lives in SQLite on the game volume
-(`/factorio/bridge/bridge.db`).
-
-Discord (gateway bot, alerts + commands in one configured channel):
-`/status`, `/pause`, `/resume`, `/save`, `/rollback 5|10|15|20|25` (button
-confirmation; archives current saves to the backups volume, scales the game
-to 0, swaps in the closest autosave, scales back — requires the Application's
-`ignoreDifferences` on `/spec/replicas`). Daily digest at `DIGEST_HOUR_UTC`.
-
-Setup: create a Discord app at discord.com/developers → Bot → Reset Token →
-paste into `DISCORD_BOT_TOKEN` in the gitignored secret; invite via
-OAuth2 URL generator with scopes `bot` + `applications.commands` and
-Send Messages/Embed Links permissions; enable Discord Dev Mode, right-click
-the alert channel → Copy ID → set `DISCORD_CHANNEL_ID` in the ConfigMap.
-Without a token the bridge runs headless (alerts to pod logs).
-
-Known trade-off: stat polling uses `/silent-command`, which flags the save as
-command-used (achievements disabled — already limited by mods anyway).
-
-## Admin / RCON
-
-RCON listens cluster-internally on TCP 27015; the image generates the password
-into `/factorio/config/rconpw`. From the pod:
+## Operations
 
 ```sh
-kubectl exec -n factorio deploy/factorio -- rcon /players online
+export KUBECONFIG=~/.kube/linode-config
+
+kubectl -n factorio logs deploy/factorio -c factorio     # game log
+kubectl -n factorio logs deploy/factorio-bridge          # bridge/bot log
+kubectl -n factorio exec deploy/factorio -c factorio -- rcon "/players online"
+
+# Bridge image release (bump N, then update k8s/factorio-bridge.yaml):
+cd bridge && docker buildx build --platform linux/amd64 \
+  -t bholcombe/factorio-bridge:N --push .
+
+# Run a backup / update check on demand (ArgoCD prunes these jobs after
+# completion — expected):
+kubectl -n factorio create job --from=cronjob/factorio-backup backup-now
 ```
+
+Secrets in `k8s/factorio-secret.yaml` (gitignored): game join password +
+full `server-settings.json`, factorio.com `USERNAME`/`TOKEN` (mod updates),
+`RCONPW` (shared game↔bridge), `DISCORD_BOT_TOKEN`. Rotate the bot token at
+discord.com/developers → Bot → Reset Token, paste, `kubectl apply`, restart
+the bridge.
+
+## Space Age (planned upgrade)
+
+When everyone owns the DLC:
+1. `DLC_SPACE_AGE: "true"` in `k8s/factorio.yaml` (existing save migrates;
+   the reverse direction is lossy).
+2. Append the DLC turret types to `DEFENSE_ENTITIES` in the bridge ConfigMap.
+3. Commit, push; the bridge is already per-surface ("breach on Vulcanus").
+
+## Known trade-offs
+
+- Bridge polling uses RCON `/silent-command`, which permanently flags the
+  save as command-used → achievements disabled (already limited by mods).
+- Breach detection sees entities *destroyed*, not damaged-in-progress
+  (damage events would need a client-synced mod — deliberately avoided).
+- The node-IP DNS record needs a manual update if the games node is recycled.
+
+## Later phases
+
+- Raspberry Pi + LEDs/display + physical kill switch, consuming a bridge API.
+- `auto_pause: false` (24/7 world) after the monitoring shakedown week.
+- Grafana/Prometheus export from the bridge.
