@@ -48,9 +48,11 @@ Discord ◀──gateway──  factorio-bridge (bholcombe/factorio-bridge)
 - Settings live in the Secret as `server-settings.json`; an initContainer
   installs it (and the fixed RCON password) on every boot. Edit Secret →
   `kubectl apply` → `kubectl rollout restart deployment/factorio -n factorio`.
-- `auto_pause: true` — world freezes when empty (24/7 mode planned after the
-  monitoring shakedown; flip `auto_pause` AND the bridge's `GAME_AUTO_PAUSE`
-  together).
+- **24/7 world**: `auto_pause: false` — the factory runs while nobody is on,
+  under bridge watch (breach auto-pause, brownout/UPS/resource alerts).
+  Freeze it deliberately with `/pause` in Discord. (If reverting to
+  pause-when-empty, flip `auto_pause` AND the bridge's `GAME_AUTO_PAUSE`
+  together.)
 - **Server auto-update**: CronJob every 30 min compares the Docker Hub
   `stable` tag digest to the running pod and rolling-restarts on change
   (digest compare avoids restart loops while Docker Hub lags factorio.com).
@@ -175,5 +177,5 @@ When everyone owns the DLC:
 ## Later phases
 
 - Raspberry Pi + LEDs/display + physical kill switch, consuming a bridge API.
-- `auto_pause: false` (24/7 world) after the monitoring shakedown week.
+
 - Grafana/Prometheus export from the bridge.
