@@ -47,6 +47,10 @@ class BridgeBot(discord.Client):
         asyncio.create_task(self._notify_loop())
         asyncio.create_task(self._digest_loop())
 
+    def _server_empty(self) -> bool:
+        s = self.poller.snapshot
+        return bool(s) and not s["players"]
+
     async def _send(self, text: str):
         if self.channel_ is not None:
             try:
@@ -209,14 +213,23 @@ class BridgeBot(discord.Client):
             if not right_channel(itx):
                 return await itx.response.send_message("Use the factorio channel.", ephemeral=True)
             await self.poller.set_paused(True)
-            await itx.response.send_message(f"⏸️ Paused by {itx.user.display_name}.")
+            msg = f"⏸️ Paused by {itx.user.display_name}."
+            if self._server_empty():
+                msg += (" (Nobody is online, so the world was already frozen by "
+                        "auto-pause — this also blocks the next joiner from unpausing it.)")
+            await itx.response.send_message(msg)
 
         @tree.command(name="resume", description="Resume the game world")
         async def resume(itx: discord.Interaction):
             if not right_channel(itx):
                 return await itx.response.send_message("Use the factorio channel.", ephemeral=True)
             await self.poller.set_paused(False)
-            await itx.response.send_message(f"▶️ Resumed by {itx.user.display_name}.")
+            msg = f"▶️ Resumed by {itx.user.display_name}."
+            if self._server_empty():
+                msg += ("\n💤 Note: nobody is online, so the world stays idle under the "
+                        "server's auto-pause until someone joins. (That's the setting "
+                        "we flip for 24/7 mode.)")
+            await itx.response.send_message(msg)
 
         @tree.command(name="save", description="Save the game now")
         async def save(itx: discord.Interaction):
