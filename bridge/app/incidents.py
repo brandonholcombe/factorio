@@ -40,6 +40,13 @@ class IncidentEngine:
         self.poller = poller
         self.open: dict[tuple[str, str], Incident] = {}  # (kind, surface) -> incident
         self.db = self._init_db()
+        # Tolerance rules: entity -> (max destroyed, rolling window seconds).
+        # Losses within the budget are digest-only, not breaches.
+        self.tolerances: dict[str, tuple[int, int]] = {
+            name: (mc, ws) for name, mc, ws in
+            self.db.execute("SELECT name, max_count, window_s FROM tolerances")
+        }
+        self._tol_hits: dict[str, list[tuple[float, int]]] = {}
 
     def _init_db(self) -> sqlite3.Connection:
         import os
@@ -58,6 +65,10 @@ class IncidentEngine:
             "CREATE TABLE IF NOT EXISTS resource_peaks ("
             "surface TEXT, name TEXT, peak REAL, alerted INTEGER DEFAULT 0,"
             "PRIMARY KEY (surface, name))"
+        )
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS tolerances ("
+            "name TEXT PRIMARY KEY, max_count INTEGER, window_s INTEGER)"
         )
         db.commit()
         return db
@@ -118,6 +129,10 @@ class IncidentEngine:
                 self.note("death", json.dumps({"surface": surface, "count": count}))
                 await self.notify.put({"kind": "death", "surface": surface, "count": count})
                 continue
+            if cls == "production" and self._tolerated(name, count, event["at"]):
+                self.note("tolerated", json.dumps(
+                    {"surface": surface, "name": name, "count": count}))
+                continue
             buckets.setdefault("wave" if cls == "defense" else "breach", {})[name] = count
 
         for inc_kind, entities in buckets.items():
@@ -168,6 +183,39 @@ class IncidentEngine:
                     "entities": dict(inc.entities),
                     "duration_s": int(inc.last_loss_at - inc.started_at),
                 })
+
+    # --- tolerance rules -------------------------------------------------
+    def _tolerated(self, name: str, count: int, at: float) -> bool:
+        rule = self.tolerances.get(name)
+        if rule is None:
+            return False
+        max_count, window_s = rule
+        hits = [(t, c) for t, c in self._tol_hits.get(name, []) if at - t < window_s]
+        hits.append((at, count))
+        self._tol_hits[name] = hits
+        return sum(c for _, c in hits) <= max_count
+
+    def set_tolerance(self, name: str, max_count: int, window_s: int) -> None:
+        self.tolerances[name] = (max_count, window_s)
+        self.db.execute(
+            "INSERT INTO tolerances (name, max_count, window_s) VALUES (?,?,?)"
+            " ON CONFLICT(name) DO UPDATE SET max_count=excluded.max_count,"
+            " window_s=excluded.window_s", (name, max_count, window_s))
+        self.db.commit()
+
+    def remove_tolerance(self, name: str) -> bool:
+        existed = self.tolerances.pop(name, None) is not None
+        self.db.execute("DELETE FROM tolerances WHERE name=?", (name,))
+        self.db.commit()
+        return existed
+
+    def tolerated_since(self, since: float) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for (detail,) in self.db.execute(
+                "SELECT detail FROM notes WHERE kind='tolerated' AND at >= ?", (since,)):
+            d = json.loads(detail)
+            out[d["name"]] = out.get(d["name"], 0) + d["count"]
+        return out
 
     # --- tapped resources ------------------------------------------------
     latest_resources: dict | None = None

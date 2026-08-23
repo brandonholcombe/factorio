@@ -146,6 +146,12 @@ class BridgeBot(discord.Client):
             f"• Breaches: {d['breach']['count']} ({d['breach']['lost']} buildings lost)"
             + (" 🎉 clean day!" if d['breach']['count'] == 0 else ""),
             f"• Player deaths: {d['deaths']}",
+        ]
+        tolerated = self.engine.tolerated_since(time.time() - 86400)
+        if tolerated:
+            tol = ", ".join(f"{n} ×{c}" for n, c in sorted(tolerated.items(), key=lambda kv: -kv[1]))
+            lines.append(f"• Tolerated losses (within budget): {tol}")
+        lines += [
             f"• Evolution: {evo_s} | Rockets launched: {snap.get('rockets', '?')}",
         ]
         last = self.engine.last_breach_at()
@@ -176,6 +182,8 @@ class BridgeBot(discord.Client):
                 "• `/pause` / `/resume` — freeze or resume the world (resume also clears a breach auto-pause)\n"
                 "• `/rollback <5|10|15|20|25>` — restore an earlier autosave "
                 "(disconnects players; asks for confirmation; archives current state first)\n"
+                "• `/tolerance add|remove|list` — budgets for expected losses "
+                "(e.g. tolerate 20 construction-robots per 60 min)\n"
                 "• `/help` — this list\n\n"
                 "I also post automatically: breach alerts (with auto-pause when nobody's "
                 "online), heavy-wave summaries, player joins/leaves & deaths, server "
@@ -337,6 +345,50 @@ class BridgeBot(discord.Client):
                 log.exception("production query failed")
                 await itx.followup.send("Couldn't read production stats — check the item "
                                         "name (internal names like `iron-plate`).")
+
+        tolerance = app_commands.Group(
+            name="tolerance", description="Budgets for expected losses (no breach alert within budget)")
+
+        @tolerance.command(name="add", description="Tolerate up to N of an entity destroyed per window")
+        @app_commands.describe(entity="Internal name, e.g. construction-robot",
+                               count="Destroyed allowed within the window",
+                               minutes="Rolling window length")
+        async def tol_add(itx: discord.Interaction, entity: str,
+                          count: app_commands.Range[int, 1, 100000],
+                          minutes: app_commands.Range[int, 1, 1440]):
+            if not right_channel(itx):
+                return await itx.response.send_message("Use the factorio channel.", ephemeral=True)
+            name = entity.strip().lower()
+            self.engine.set_tolerance(name, count, minutes * 60)
+            await itx.response.send_message(
+                f"🤫 Tolerating up to **{count} × {name}** destroyed per "
+                f"**{minutes} min** — beyond that it's a breach again.")
+
+        @tolerance.command(name="remove", description="Remove a tolerance rule")
+        @app_commands.describe(entity="Internal name, e.g. construction-robot")
+        async def tol_remove(itx: discord.Interaction, entity: str):
+            if not right_channel(itx):
+                return await itx.response.send_message("Use the factorio channel.", ephemeral=True)
+            name = entity.strip().lower()
+            if self.engine.remove_tolerance(name):
+                await itx.response.send_message(f"🔔 `{name}` alerts as a breach again.")
+            else:
+                await itx.response.send_message(f"No rule for `{name}`.", ephemeral=True)
+
+        @tolerance.command(name="list", description="Show tolerance rules")
+        async def tol_list(itx: discord.Interaction):
+            if not right_channel(itx):
+                return await itx.response.send_message("Use the factorio channel.", ephemeral=True)
+            rules = self.engine.tolerances
+            if not rules:
+                return await itx.response.send_message("No tolerance rules — every "
+                                                       "production loss alerts.")
+            lines = ["🤫 **Tolerance rules**"] + [
+                f"• {n}: up to {c} per {w // 60} min"
+                for n, (c, w) in sorted(rules.items())]
+            await itx.response.send_message("\n".join(lines))
+
+        tree.add_command(tolerance)
 
         @tree.command(name="rollback", description="Roll the world back (disconnects players!)")
         @app_commands.describe(minutes="How far back")

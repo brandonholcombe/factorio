@@ -61,7 +61,7 @@ data:
   QUIET_GAP_S: "120"
   WAVE_ALERT_THRESHOLD: "25"
   AUTO_PAUSE_ON_BREACH: "true"
-  ALERT_JOINS: "true"
+  ALERT_JOINS: "false"
   # Mirror of the game's auto_pause setting — flip BOTH at the 24/7 switch.
   GAME_AUTO_PAUSE: "false"
   # Tapped-resource alerts: scan cadence, alert fraction of peak, min patch size.
@@ -114,7 +114,7 @@ spec:
         fsGroup: 845
       containers:
         - name: bridge
-          image: bholcombe/factorio-bridge:7
+          image: bholcombe/factorio-bridge:8
           envFrom:
             - configMapRef:
                 name: factorio-bridge-config
