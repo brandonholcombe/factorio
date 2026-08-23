@@ -64,6 +64,24 @@ def prod_item_lua(item: str) -> str:
     )
 
 
+# Slow scan: ore remaining under/near every mining drill, deduped by tile.
+# Runs every RESOURCE_POLL_S (heavier than the vitals poll — full drill sweep).
+RESOURCES_LUA = (
+    "/sc local out={} for _,s in pairs(game.surfaces) do "
+    "local acc={} local seen={} "
+    "for _,d in pairs(s.find_entities_filtered{type='mining-drill',force='player'}) do "
+    "local r=(d.prototype.mining_drill_radius or 0)+0.5 "
+    "local area={{d.position.x-r,d.position.y-r},{d.position.x+r,d.position.y+r}} "
+    "for _,res in pairs(s.find_entities_filtered{area=area,type='resource'}) do "
+    "local pk=res.position.x..'_'..res.position.y "
+    "if not seen[pk] then seen[pk]=true "
+    "local t=acc[res.name] "
+    "if not t then t={amount=0,tiles=0,infinite=res.prototype.infinite_resource or false} "
+    "acc[res.name]=t end "
+    "t.amount=t.amount+res.amount t.tiles=t.tiles+1 end end end "
+    "out[s.name]=acc end rcon.print(helpers.table_to_json(out))"
+)
+
 EVOLUTION_THRESHOLDS = (0.25, 0.5, 0.75, 0.9)
 
 
@@ -71,6 +89,9 @@ class Poller:
     def __init__(self, events: asyncio.Queue):
         self.events = events
         self.rcon = RconClient(config.RCON_HOST, config.RCON_PORT, config.RCON_PASSWORD)
+        # One socket, several users (vitals loop, resource loop, bot commands):
+        # serialize access or the framing interleaves.
+        self._rcon_lock = asyncio.Lock()
         self.up: bool | None = None
         self.snapshot: dict | None = None
         self._fails = 0
@@ -91,7 +112,7 @@ class Poller:
     async def run(self) -> None:
         while True:
             try:
-                raw = await asyncio.to_thread(self.rcon.command, POLL_LUA)
+                raw = await self.cmd(POLL_LUA)
                 self._handle(json.loads(raw))
                 self._fails = 0
                 if self.up is False:
@@ -225,9 +246,25 @@ class Poller:
                     self._power_alerted.discard(sname)
                     self.events.put_nowait({"kind": "power_ok", "surface": sname})
 
+    async def resource_loop(self) -> None:
+        """Slow loop: tapped-resource totals -> one 'resources' event per scan."""
+        await asyncio.sleep(20)  # let the vitals poll establish the connection
+        while True:
+            try:
+                raw = await self.cmd(RESOURCES_LUA)
+                data = json.loads(raw)
+                if isinstance(data, dict):
+                    surfaces = {s: (v if isinstance(v, dict) else {})
+                                for s, v in data.items()}
+                    await self.events.put({"kind": "resources", "surfaces": surfaces})
+            except (OSError, RconError, json.JSONDecodeError) as exc:
+                log.warning("resource scan failed: %s", exc)
+            await asyncio.sleep(config.RESOURCE_POLL_S)
+
     # --- control / query actions (used by the bot) -----------------------
     async def cmd(self, command: str) -> str:
-        return await asyncio.to_thread(self.rcon.command, command)
+        async with self._rcon_lock:
+            return await asyncio.to_thread(self.rcon.command, command)
 
     async def set_paused(self, paused: bool) -> None:
         await self.cmd(f"/sc game.tick_paused={'true' if paused else 'false'}")

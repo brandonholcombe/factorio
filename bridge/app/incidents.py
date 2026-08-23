@@ -54,6 +54,11 @@ class IncidentEngine:
             "CREATE TABLE IF NOT EXISTS notes ("
             "id INTEGER PRIMARY KEY, at REAL, kind TEXT, detail TEXT)"
         )
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS resource_peaks ("
+            "surface TEXT, name TEXT, peak REAL, alerted INTEGER DEFAULT 0,"
+            "PRIMARY KEY (surface, name))"
+        )
         db.commit()
         return db
 
@@ -99,6 +104,8 @@ class IncidentEngine:
                       "ups_low", "ups_ok", "power_low", "power_ok"):
             self.note(kind, json.dumps({k: v for k, v in event.items() if k != "kind"}))
             await self.notify.put(event)
+        elif kind == "resources":
+            await self._resources(event["surfaces"])
 
     async def _losses(self, event: dict) -> None:
         surface, deltas = event["surface"], event["deltas"]
@@ -161,6 +168,56 @@ class IncidentEngine:
                     "entities": dict(inc.entities),
                     "duration_s": int(inc.last_loss_at - inc.started_at),
                 })
+
+    # --- tapped resources ------------------------------------------------
+    latest_resources: dict | None = None
+
+    async def _resources(self, surfaces: dict) -> None:
+        self.latest_resources = {"at": time.time(), "surfaces": surfaces}
+        for sname, res in surfaces.items():
+            for name, t in res.items():
+                amount = t.get("amount", 0)
+                row = self.db.execute(
+                    "SELECT peak, alerted FROM resource_peaks WHERE surface=? AND name=?",
+                    (sname, name)).fetchone()
+                peak, alerted = row if row else (0.0, 0)
+                peak = max(peak, amount)
+                pct = amount / peak if peak else 1.0
+                if t.get("infinite"):
+                    pass  # display-only: oil bottoms out at 20% yield by design
+                elif (not alerted and peak >= config.RESOURCE_MIN_PEAK
+                        and pct < config.RESOURCE_ALERT_PCT):
+                    alerted = 1
+                    self.note("resource_low", json.dumps(
+                        {"surface": sname, "name": name, "pct": pct}))
+                    await self.notify.put({
+                        "kind": "resource_low", "surface": sname, "name": name,
+                        "pct": pct, "amount": amount, "peak": peak})
+                elif alerted and pct > config.RESOURCE_ALERT_PCT * 1.5:
+                    alerted = 0  # a fresh patch was tapped; re-arm the alert
+                self.db.execute(
+                    "INSERT INTO resource_peaks (surface, name, peak, alerted)"
+                    " VALUES (?,?,?,?) ON CONFLICT(surface, name)"
+                    " DO UPDATE SET peak=excluded.peak, alerted=excluded.alerted",
+                    (sname, name, peak, alerted))
+        self.db.commit()
+
+    def resource_report(self) -> list[dict]:
+        if not self.latest_resources:
+            return []
+        out = []
+        for sname, res in self.latest_resources["surfaces"].items():
+            for name, t in res.items():
+                row = self.db.execute(
+                    "SELECT peak FROM resource_peaks WHERE surface=? AND name=?",
+                    (sname, name)).fetchone()
+                peak = row[0] if row else t.get("amount", 0)
+                out.append({
+                    "surface": sname, "name": name, "amount": t.get("amount", 0),
+                    "peak": peak, "infinite": bool(t.get("infinite")),
+                    "tiles": t.get("tiles", 0)})
+        out.sort(key=lambda r: (r["surface"], r["amount"] / r["peak"] if r["peak"] else 1))
+        return out
 
     # --- reporting -------------------------------------------------------
     def digest(self, since: float) -> dict:

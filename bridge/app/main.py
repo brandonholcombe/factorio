@@ -30,7 +30,7 @@ async def amain() -> None:
     poller = Poller(events)
     engine = IncidentEngine(events, notify, poller)
 
-    tasks = [poller.run(), engine.run()]
+    tasks = [poller.run(), poller.resource_loop(), engine.run()]
     if config.DISCORD_BOT_TOKEN and config.DISCORD_CHANNEL_ID:
         from .discord_bot import BridgeBot
         bot = BridgeBot(poller, engine, notify)

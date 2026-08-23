@@ -111,6 +111,12 @@ class BridgeBot(discord.Client):
                     "are low on power. The factory is starving.")
             elif kind == "power_ok":
                 await self._send(f"🔌 Power restored on {ev['surface']}.")
+            elif kind == "resource_low":
+                await self._send(
+                    f"⛏️ **{ev['name']}** on {ev['surface']} is running out — "
+                    f"{ev['amount']:,.0f} left in tapped patches "
+                    f"(**{ev['pct']:.0%}** of the {ev['peak']:,.0f} peak). "
+                    "Time to scout a new patch.")
 
     # --- daily digest ----------------------------------------------------
     async def _digest_loop(self):
@@ -160,6 +166,7 @@ class BridgeBot(discord.Client):
                 "• `/incidents` — recent attacks and breaches\n"
                 "• `/production [item]` — production rates (top 10, or one item over 1m/10m/1h)\n"
                 "• `/research` — current research progress\n"
+                "• `/resources` — tapped ore remaining vs peak (alerts below 20%)\n"
                 "• `/saves` — saves on the server (what `/rollback` can target)\n"
                 "• `/save` — save the map right now\n"
                 "• `/pause` / `/resume` — freeze or resume the world (resume also clears a breach auto-pause)\n"
@@ -251,6 +258,27 @@ class BridgeBot(discord.Client):
                 age = (time.time() - mtime) / 60
                 lines.append(f"• `{os.path.basename(path)}` — {age:.0f} min ago "
                              f"({dt.datetime.fromtimestamp(mtime).strftime('%H:%M:%S')})")
+            await itx.response.send_message("\n".join(lines))
+
+        @tree.command(name="resources", description="Tapped ore remaining vs peak")
+        async def resources_cmd(itx: discord.Interaction):
+            if not right_channel(itx):
+                return await itx.response.send_message("Use the factorio channel.", ephemeral=True)
+            rows = self.engine.resource_report()
+            if not rows:
+                return await itx.response.send_message(
+                    "⛏️ No scan yet (runs every 5 min) — or no mining drills placed.")
+            lines = ["⛏️ **Tapped resources** (worst first)"]
+            for r in rows:
+                pct = r["amount"] / r["peak"] if r["peak"] else 1.0
+                icon = "🔴" if pct < 0.2 else ("🟡" if pct < 0.5 else "🟢")
+                if r["infinite"]:
+                    yield_pct = r["amount"] / r["tiles"] / 100 if r["tiles"] else 0
+                    lines.append(f"{icon} {r['surface']} · {r['name']}: "
+                                 f"~{yield_pct:.0%} avg yield ({r['tiles']} tiles, infinite)")
+                else:
+                    lines.append(f"{icon} {r['surface']} · {r['name']}: "
+                                 f"{r['amount']:,.0f} ({pct:.0%} of peak {r['peak']:,.0f})")
             await itx.response.send_message("\n".join(lines))
 
         @tree.command(name="research", description="Current research progress")

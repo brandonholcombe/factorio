@@ -50,6 +50,14 @@ ALERT_JOINS = os.environ.get("ALERT_JOINS", "true").lower() == "true"
 # 0 UPS. Flip this together with auto_pause at the 24/7 switch.
 GAME_AUTO_PAUSE = os.environ.get("GAME_AUTO_PAUSE", "true").lower() == "true"
 
+# Tapped-resource tracking: ore within reach of mining drills, per resource
+# per surface. Peak-seen is the baseline ("original" isn't retroactively
+# knowable); alert when current drops below the fraction. Infinite resources
+# (oil) are display-only. MIN_PEAK avoids alarming on tiny starter patches.
+RESOURCE_POLL_S = float(os.environ.get("RESOURCE_POLL_S", "300"))
+RESOURCE_ALERT_PCT = float(os.environ.get("RESOURCE_ALERT_PCT", "0.20"))
+RESOURCE_MIN_PEAK = int(os.environ.get("RESOURCE_MIN_PEAK", "10000"))
+
 # Health alerts: sustained-condition thresholds (polls are POLL_INTERVAL_S apart).
 UPS_ALERT_BELOW = float(os.environ.get("UPS_ALERT_BELOW", "55"))
 UPS_ALERT_POLLS = int(os.environ.get("UPS_ALERT_POLLS", "6"))       # ~1 min
