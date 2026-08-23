@@ -82,6 +82,17 @@ RESOURCES_LUA = (
     "out[s.name]=acc end rcon.print(helpers.table_to_json(out))"
 )
 
+# Prototype name lists for Discord autocomplete (cached, hourly refresh).
+ENTITY_NAMES_LUA = (
+    "/sc local out={} for n,p in pairs(prototypes.entity) do "
+    "if p.has_flag('player-creation') then out[#out+1]=n end end "
+    "rcon.print(helpers.table_to_json(out))"
+)
+ITEM_NAMES_LUA = (
+    "/sc local out={} for n,_ in pairs(prototypes.item) do out[#out+1]=n end "
+    "rcon.print(helpers.table_to_json(out))"
+)
+
 EVOLUTION_THRESHOLDS = (0.25, 0.5, 0.75, 0.9)
 
 
@@ -271,6 +282,25 @@ class Poller:
 
     async def save(self) -> str:
         return await self.cmd("/server-save")
+
+    _name_cache: dict[str, tuple[float, list[str]]] = {}
+
+    async def _names(self, key: str, lua: str) -> list[str]:
+        cached = self._name_cache.get(key)
+        if cached and time.time() - cached[0] < 3600:
+            return cached[1]
+        try:
+            names = sorted(json.loads(await self.cmd(lua)))
+        except (OSError, RconError, json.JSONDecodeError):
+            return cached[1] if cached else []
+        self._name_cache[key] = (time.time(), names)
+        return names
+
+    async def entity_names(self) -> list[str]:
+        return await self._names("entity", ENTITY_NAMES_LUA)
+
+    async def item_names(self) -> list[str]:
+        return await self._names("item", ITEM_NAMES_LUA)
 
     async def production_top(self) -> dict[str, float]:
         return json.loads(await self.cmd(PROD_TOP_LUA))

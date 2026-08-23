@@ -360,9 +360,13 @@ class BridgeBot(discord.Client):
                 return await itx.response.send_message("Use the factorio channel.", ephemeral=True)
             name = entity.strip().lower()
             self.engine.set_tolerance(name, count, minutes * 60)
+            known = await self.poller.entity_names()
+            warn = ("" if not known or name in known else
+                    f"\n⚠️ `{name}` isn't a known entity name in this game — rule "
+                    "saved anyway, but it won't match anything until it is.")
             await itx.response.send_message(
                 f"🤫 Tolerating up to **{count} × {name}** destroyed per "
-                f"**{minutes} min** — beyond that it's a breach again.")
+                f"**{minutes} min** — beyond that it's a breach again.{warn}")
 
         @tolerance.command(name="remove", description="Remove a tolerance rule")
         @app_commands.describe(entity="Internal name, e.g. construction-robot")
@@ -387,6 +391,24 @@ class BridgeBot(discord.Client):
                 f"• {n}: up to {c} per {w // 60} min"
                 for n, (c, w) in sorted(rules.items())]
             await itx.response.send_message("\n".join(lines))
+
+        def _match(names: list[str], current: str) -> list[app_commands.Choice[str]]:
+            cur = current.strip().lower()
+            starts = [n for n in names if n.startswith(cur)]
+            contains = [n for n in names if cur in n and n not in starts]
+            return [app_commands.Choice(name=n, value=n) for n in (starts + contains)[:25]]
+
+        @tol_add.autocomplete("entity")
+        async def tol_add_ac(itx: discord.Interaction, current: str):
+            return _match(await self.poller.entity_names(), current)
+
+        @tol_remove.autocomplete("entity")
+        async def tol_remove_ac(itx: discord.Interaction, current: str):
+            return _match(sorted(self.engine.tolerances), current)
+
+        @production.autocomplete("item")
+        async def production_ac(itx: discord.Interaction, current: str):
+            return _match(await self.poller.item_names(), current)
 
         tree.add_command(tolerance)
 
