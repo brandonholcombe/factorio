@@ -90,6 +90,27 @@ class BridgeBot(discord.Client):
                 await self._send("🚨 Server unreachable (RCON down for 60s+).")
             elif kind == "server_up" and not in_rollback:
                 await self._send("✅ Server is back.")
+            elif kind == "rocket":
+                n = ev["total"]
+                prefix = "🚀🎉 **FIRST ROCKET LAUNCHED!**" if n == ev["delta"] else "🚀 Rocket launched!"
+                await self._send(f"{prefix} (total: {n})")
+            elif kind == "research_done":
+                await self._send(f"🔬 Research complete: **{ev['name']}**")
+            elif kind == "evolution":
+                await self._send(
+                    f"🧬 Evolution on {ev['surface']} crossed **{ev['threshold']:.0%}** "
+                    f"(now {ev['value']:.1%}) — biters are getting tougher.")
+            elif kind == "ups_low":
+                await self._send(f"🐌 Server struggling: UPS down to {ev['ups']:.0f} "
+                                 "(sustained). Big fights or a megabase moment?")
+            elif kind == "ups_ok":
+                await self._send(f"💨 UPS recovered ({ev['ups']:.0f}).")
+            elif kind == "power_low":
+                await self._send(
+                    f"⚡ **Brownout on {ev['surface']}** — {ev['count']} sampled machines "
+                    "are low on power. The factory is starving.")
+            elif kind == "power_ok":
+                await self._send(f"🔌 Power restored on {ev['surface']}.")
 
     # --- daily digest ----------------------------------------------------
     async def _digest_loop(self):
@@ -135,6 +156,11 @@ class BridgeBot(discord.Client):
             await itx.response.send_message(
                 "🏭 **Factory Overseer commands**\n"
                 "• `/status` — server state: players, UPS, evolution, rockets, last breach\n"
+                "• `/report` — last-24h factory report on demand\n"
+                "• `/incidents` — recent attacks and breaches\n"
+                "• `/production [item]` — production rates (top 10, or one item over 1m/10m/1h)\n"
+                "• `/research` — current research progress\n"
+                "• `/saves` — saves on the server (what `/rollback` can target)\n"
                 "• `/save` — save the map right now\n"
                 "• `/pause` / `/resume` — freeze or resume the world (resume also clears a breach auto-pause)\n"
                 "• `/rollback <5|10|15|20|25>` — restore an earlier autosave "
@@ -186,6 +212,85 @@ class BridgeBot(discord.Client):
                 return await itx.response.send_message("Use the factorio channel.", ephemeral=True)
             await self.poller.save()
             await itx.response.send_message("💾 Map saved.")
+
+        @tree.command(name="report", description="Last-24h factory report, on demand")
+        async def report(itx: discord.Interaction):
+            if not right_channel(itx):
+                return await itx.response.send_message("Use the factorio channel.", ephemeral=True)
+            await itx.response.send_message(self._digest_text())
+
+        @tree.command(name="incidents", description="Recent attacks and breaches")
+        async def incidents_cmd(itx: discord.Interaction):
+            if not right_channel(itx):
+                return await itx.response.send_message("Use the factorio channel.", ephemeral=True)
+            rows = self.engine.recent_incidents(8)
+            if not rows:
+                return await itx.response.send_message("📗 No recorded incidents yet.")
+            lines = ["📕 **Recent incidents** (newest first)"]
+            for r in rows:
+                when = dt.datetime.fromtimestamp(r["ended_at"]).strftime("%b %d %H:%M")
+                icon = "🔴" if r["kind"] == "breach" else "⚔️"
+                lines.append(f"{icon} {when} · {r['kind']} on {r['surface']} — "
+                             f"{_fmt_entities(r['entities'], limit=4)}")
+            await itx.response.send_message("\n".join(lines))
+
+        @tree.command(name="saves", description="Available saves (what /rollback can target)")
+        async def saves_cmd(itx: discord.Interaction):
+            if not right_channel(itx):
+                return await itx.response.send_message("Use the factorio channel.", ephemeral=True)
+            saves = rollback.candidate_saves()
+            if not saves:
+                return await itx.response.send_message("No saves found.")
+            lines = ["💾 **Saves on the server** (newest first)"]
+            for path, mtime in saves:
+                age = (time.time() - mtime) / 60
+                lines.append(f"• `{os.path.basename(path)}` — {age:.0f} min ago "
+                             f"({dt.datetime.fromtimestamp(mtime).strftime('%H:%M:%S')})")
+            await itx.response.send_message("\n".join(lines))
+
+        @tree.command(name="research", description="Current research progress")
+        async def research(itx: discord.Interaction):
+            if not right_channel(itx):
+                return await itx.response.send_message("Use the factorio channel.", ephemeral=True)
+            s = self.poller.snapshot
+            if not s:
+                return await itx.response.send_message("No data yet — server may be down.")
+            if s.get("research"):
+                bar_n = int(s["research_progress"] * 10)
+                bar = "▰" * bar_n + "▱" * (10 - bar_n)
+                msg = (f"🔬 Researching **{s['research']}** {bar} "
+                       f"{s['research_progress']:.0%}")
+            else:
+                msg = "🔬 Nothing queued in the lab!"
+            await itx.response.send_message(
+                f"{msg}\n📚 Technologies researched: {s.get('researched', '?')}")
+
+        @tree.command(name="production", description="Production rates (top items, or one item)")
+        @app_commands.describe(item="Item name, e.g. iron-plate (omit for top 10)")
+        async def production(itx: discord.Interaction, item: str | None = None):
+            if not right_channel(itx):
+                return await itx.response.send_message("Use the factorio channel.", ephemeral=True)
+            await itx.response.defer()
+            try:
+                if item:
+                    d = await self.poller.production_item(item.strip().lower())
+                    def io(pair):
+                        return f"made {pair[0]:,.0f} / used {pair[1]:,.0f}"
+                    await itx.followup.send(
+                        f"🏭 **{item}** — last 1m: {io(d['m1'])} · last 10m: {io(d['m10'])}"
+                        f" · last 1h: {io(d['h1'])}")
+                else:
+                    rates = await self.poller.production_top()
+                    top = sorted(rates.items(), key=lambda kv: -kv[1])[:10]
+                    if not top:
+                        return await itx.followup.send("🏭 Nothing produced in the last minute.")
+                    lines = ["🏭 **Production, last minute** (top 10)"]
+                    lines += [f"• {n}: {v:,.0f}/min" for n, v in top]
+                    await itx.followup.send("\n".join(lines))
+            except Exception:
+                log.exception("production query failed")
+                await itx.followup.send("Couldn't read production stats — check the item "
+                                        "name (internal names like `iron-plate`).")
 
         @tree.command(name="rollback", description="Roll the world back (disconnects players!)")
         @app_commands.describe(minutes="How far back")

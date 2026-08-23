@@ -95,6 +95,10 @@ class IncidentEngine:
         elif kind in ("server_down", "server_up"):
             self.note(kind)
             await self.notify.put({"kind": kind})
+        elif kind in ("rocket", "research_done", "evolution",
+                      "ups_low", "ups_ok", "power_low", "power_ok"):
+            self.note(kind, json.dumps({k: v for k, v in event.items() if k != "kind"}))
+            await self.notify.put(event)
 
     async def _losses(self, event: dict) -> None:
         surface, deltas = event["surface"], event["deltas"]
@@ -175,6 +179,16 @@ class IncidentEngine:
             "SELECT COUNT(*) FROM notes WHERE kind='death' AND at >= ?", (since,)).fetchone()
         out["deaths"] = deaths
         return out
+
+    def recent_incidents(self, limit: int = 8) -> list[dict]:
+        cur = self.db.execute(
+            "SELECT kind, surface, started_at, ended_at, entities, total"
+            " FROM incidents ORDER BY ended_at DESC LIMIT ?", (limit,))
+        return [
+            {"kind": k, "surface": s, "started_at": a, "ended_at": b,
+             "entities": json.loads(e), "total": t}
+            for k, s, a, b, e, t in cur.fetchall()
+        ]
 
     def last_breach_at(self) -> float | None:
         row = self.db.execute(

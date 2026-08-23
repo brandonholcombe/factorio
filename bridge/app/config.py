@@ -44,6 +44,11 @@ WAVE_ALERT_THRESHOLD = int(os.environ.get("WAVE_ALERT_THRESHOLD", "25"))
 AUTO_PAUSE_ON_BREACH = os.environ.get("AUTO_PAUSE_ON_BREACH", "true").lower() == "true"
 
 ALERT_JOINS = os.environ.get("ALERT_JOINS", "true").lower() == "true"
+
+# Health alerts: sustained-condition thresholds (polls are POLL_INTERVAL_S apart).
+UPS_ALERT_BELOW = float(os.environ.get("UPS_ALERT_BELOW", "55"))
+UPS_ALERT_POLLS = int(os.environ.get("UPS_ALERT_POLLS", "6"))       # ~1 min
+POWER_ALERT_POLLS = int(os.environ.get("POWER_ALERT_POLLS", "3"))   # ~30 s
 DIGEST_HOUR_UTC = int(os.environ.get("DIGEST_HOUR_UTC", "15"))  # 8am Pacific
 
 DATA_DIR = os.environ.get("DATA_DIR", "/data")          # factorio-data PVC

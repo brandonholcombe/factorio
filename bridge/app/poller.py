@@ -1,8 +1,8 @@
 """10s RCON poll loop: server vitals + enemy kill-count deltas.
 
 Emits plain-dict events to an asyncio queue; incidents.py turns them into
-waves/breaches and discord_bot.py renders them. Per-surface from day 1 so the
-Space Age flip needs no code changes here.
+waves/breaches/notifications and discord_bot.py renders them. Per-surface
+from day 1 so the Space Age flip needs no code changes here.
 """
 import asyncio
 import json
@@ -16,29 +16,76 @@ log = logging.getLogger("poller")
 
 # One silent-command, one JSON blob back. NB: /sc marks the save as
 # command-used (achievements off) — documented trade-off.
+# low_power samples a fixed set of machines (find_entities_filtered order is
+# deterministic) as a cheap brownout proxy.
 POLL_LUA = (
     "/sc local e=game.forces['enemy'] local pf=game.forces['player'] "
     "local out={tick=game.tick,paused=game.tick_paused,rockets=pf.rockets_launched,"
-    "players={},surfaces={}} "
+    "players={},surfaces={},research=nil,research_progress=0,researched=0} "
     "for _,p in pairs(game.connected_players) do table.insert(out.players,p.name) end "
+    "if pf.current_research then out.research=pf.current_research.name "
+    "out.research_progress=pf.research_progress end "
+    "local rc=0 for _,t in pairs(pf.technologies) do if t.researched then rc=rc+1 end end "
+    "out.researched=rc "
     "for _,s in pairs(game.surfaces) do "
-    "local k=e.get_kill_count_statistics(s) "
-    "out.surfaces[s.name]={evolution=e.get_evolution_factor(s),kills=k.input_counts} "
-    "end rcon.print(helpers.table_to_json(out))"
+    "local k=e.get_kill_count_statistics(s) local low=0 "
+    "for _,m in pairs(s.find_entities_filtered{force='player',"
+    "type={'assembling-machine','furnace','inserter'},limit=60}) do "
+    "if m.status==defines.entity_status.low_power then low=low+1 end end "
+    "out.surfaces[s.name]={evolution=e.get_evolution_factor(s),kills=k.input_counts,"
+    "low_power=low} end rcon.print(helpers.table_to_json(out))"
 )
+
+# On-demand production queries (used by /production).
+PROD_TOP_LUA = (
+    "/sc local pf=game.forces['player'] local out={} "
+    "for _,s in pairs(game.surfaces) do "
+    "local st=pf.get_item_production_statistics(s) "
+    "for name,_ in pairs(st.input_counts) do "
+    "local r=st.get_flow_count{name=name,category='input',"
+    "precision_index=defines.flow_precision_index.one_minute} "
+    "if r>0 then out[name]=(out[name] or 0)+r end end end "
+    "rcon.print(helpers.table_to_json(out))"
+)
+
+
+def prod_item_lua(item: str) -> str:
+    item = item.replace("'", "")
+    return (
+        "/sc local pf=game.forces['player'] "
+        "local out={m1={0,0},m10={0,0},h1={0,0}} "
+        "local px=defines.flow_precision_index "
+        "for _,s in pairs(game.surfaces) do "
+        "local st=pf.get_item_production_statistics(s) "
+        "for key,pi in pairs({m1=px.one_minute,m10=px.ten_minutes,h1=px.one_hour}) do "
+        f"out[key][1]=out[key][1]+st.get_flow_count{{name='{item}',category='input',precision_index=pi}} "
+        f"out[key][2]=out[key][2]+st.get_flow_count{{name='{item}',category='output',precision_index=pi}} "
+        "end end rcon.print(helpers.table_to_json(out))"
+    )
+
+
+EVOLUTION_THRESHOLDS = (0.25, 0.5, 0.75, 0.9)
 
 
 class Poller:
     def __init__(self, events: asyncio.Queue):
         self.events = events
         self.rcon = RconClient(config.RCON_HOST, config.RCON_PORT, config.RCON_PASSWORD)
-        self.up: bool | None = None  # None until first result
-        self.snapshot: dict | None = None  # latest good poll
+        self.up: bool | None = None
+        self.snapshot: dict | None = None
         self._fails = 0
         self._prev_kills: dict[str, dict[str, int]] | None = None
         self._prev_players: set[str] | None = None
         self._prev_tick: int | None = None
         self._prev_wall: float | None = None
+        self._prev_rockets: int | None = None
+        self._prev_researched: int | None = None
+        self._prev_research_name: str | None = None
+        self._prev_evolution: dict[str, float] = {}
+        self._low_ups_polls = 0
+        self._ups_alerted = False
+        self._low_power_polls: dict[str, int] = {}
+        self._power_alerted: set[str] = set()
         self.ups: float | None = None
 
     async def run(self) -> None:
@@ -61,17 +108,35 @@ class Poller:
 
     def _handle(self, data: dict) -> None:
         now = time.time()
-        # Lua {} serializes as [] — normalize the empties.
         players = set(data.get("players") or [])
         surfaces = data.get("surfaces") or {}
-        if isinstance(surfaces, list):
+        if isinstance(surfaces, list):  # Lua {} serializes as []
             surfaces = {}
         kills: dict[str, dict[str, int]] = {}
         for sname, sdata in surfaces.items():
             k = sdata.get("kills")
             kills[sname] = k if isinstance(k, dict) else {}
 
-        # UPS from tick delta (only meaningful while unpaused).
+        self._track_ups(data, now)
+        self._track_kills(kills, players, now)
+        self._track_players(players)
+        self._track_rockets(data)
+        self._track_research(data)
+        self._track_evolution(surfaces)
+        self._track_power(surfaces, data["paused"])
+
+        self.snapshot = {
+            "at": now, "tick": data["tick"], "paused": data["paused"],
+            "players": sorted(players), "rockets": data.get("rockets", 0),
+            "evolution": {s: d.get("evolution", 0.0) for s, d in surfaces.items()},
+            "research": data.get("research"),
+            "research_progress": data.get("research_progress", 0),
+            "researched": data.get("researched", 0),
+            "low_power": {s: d.get("low_power", 0) for s, d in surfaces.items()},
+            "ups": self.ups,
+        }
+
+    def _track_ups(self, data: dict, now: float) -> None:
         if self._prev_tick is not None and self._prev_wall is not None and not data["paused"]:
             dt = now - self._prev_wall
             if dt > 0:
@@ -80,7 +145,21 @@ class Poller:
             self.ups = None
         self._prev_tick, self._prev_wall = data["tick"], now
 
-        # Kill-count deltas (first poll after (re)start is baseline only).
+        if self.ups is None:
+            self._low_ups_polls = 0
+            return
+        if self.ups < config.UPS_ALERT_BELOW:
+            self._low_ups_polls += 1
+            if self._low_ups_polls == config.UPS_ALERT_POLLS and not self._ups_alerted:
+                self._ups_alerted = True
+                self.events.put_nowait({"kind": "ups_low", "ups": self.ups})
+        else:
+            self._low_ups_polls = 0
+            if self._ups_alerted and self.ups >= config.UPS_ALERT_BELOW + 3:
+                self._ups_alerted = False
+                self.events.put_nowait({"kind": "ups_ok", "ups": self.ups})
+
+    def _track_kills(self, kills, players, now) -> None:
         if self._prev_kills is not None:
             for sname, counts in kills.items():
                 prev = self._prev_kills.get(sname, {})
@@ -92,6 +171,7 @@ class Poller:
                     })
         self._prev_kills = kills
 
+    def _track_players(self, players: set[str]) -> None:
         if self._prev_players is not None:
             for name in players - self._prev_players:
                 self.events.put_nowait({"kind": "join", "player": name})
@@ -99,14 +179,50 @@ class Poller:
                 self.events.put_nowait({"kind": "leave", "player": name})
         self._prev_players = players
 
-        self.snapshot = {
-            "at": now, "tick": data["tick"], "paused": data["paused"],
-            "players": sorted(players), "rockets": data.get("rockets", 0),
-            "evolution": {s: d.get("evolution", 0.0) for s, d in surfaces.items()},
-            "ups": self.ups,
-        }
+    def _track_rockets(self, data: dict) -> None:
+        total = data.get("rockets", 0)
+        if self._prev_rockets is not None and total > self._prev_rockets:
+            self.events.put_nowait({
+                "kind": "rocket", "total": total, "delta": total - self._prev_rockets})
+        self._prev_rockets = total
 
-    # --- control actions (used by the bot) -------------------------------
+    def _track_research(self, data: dict) -> None:
+        researched = data.get("researched", 0)
+        if (self._prev_researched is not None and researched > self._prev_researched
+                and self._prev_research_name):
+            self.events.put_nowait({"kind": "research_done", "name": self._prev_research_name})
+        self._prev_researched = researched
+        self._prev_research_name = data.get("research") or self._prev_research_name
+
+    def _track_evolution(self, surfaces: dict) -> None:
+        for sname, sdata in surfaces.items():
+            cur = sdata.get("evolution", 0.0)
+            prev = self._prev_evolution.get(sname)
+            if prev is not None:
+                for t in EVOLUTION_THRESHOLDS:
+                    if prev < t <= cur:
+                        self.events.put_nowait({
+                            "kind": "evolution", "surface": sname, "threshold": t, "value": cur})
+            self._prev_evolution[sname] = cur
+
+    def _track_power(self, surfaces: dict, paused: bool) -> None:
+        if paused:
+            return
+        for sname, sdata in surfaces.items():
+            low = sdata.get("low_power", 0)
+            if low > 0:
+                n = self._low_power_polls.get(sname, 0) + 1
+                self._low_power_polls[sname] = n
+                if n == config.POWER_ALERT_POLLS and sname not in self._power_alerted:
+                    self._power_alerted.add(sname)
+                    self.events.put_nowait({"kind": "power_low", "surface": sname, "count": low})
+            else:
+                self._low_power_polls[sname] = 0
+                if sname in self._power_alerted:
+                    self._power_alerted.discard(sname)
+                    self.events.put_nowait({"kind": "power_ok", "surface": sname})
+
+    # --- control / query actions (used by the bot) -----------------------
     async def cmd(self, command: str) -> str:
         return await asyncio.to_thread(self.rcon.command, command)
 
@@ -115,3 +231,9 @@ class Poller:
 
     async def save(self) -> str:
         return await self.cmd("/server-save")
+
+    async def production_top(self) -> dict[str, float]:
+        return json.loads(await self.cmd(PROD_TOP_LUA))
+
+    async def production_item(self, item: str) -> dict:
+        return json.loads(await self.cmd(prod_item_lua(item)))
