@@ -1,0 +1,149 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: factorio-rcon
+  namespace: factorio
+spec:
+  selector:
+    app: factorio
+  ports:
+    - name: rcon
+      port: 27015
+      targetPort: 27015
+      protocol: TCP
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: factorio-bridge
+  namespace: factorio
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: factorio-bridge
+  namespace: factorio
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    verbs: ["get", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: factorio-bridge
+  namespace: factorio
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: factorio-bridge
+subjects:
+  - kind: ServiceAccount
+    name: factorio-bridge
+    namespace: factorio
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: factorio-bridge-config
+  namespace: factorio
+data:
+  # Discord channel the bot alerts in and listens to (Dev Mode -> Copy ID).
+  # "0" keeps the bridge in headless mode (alerts to logs only).
+  DISCORD_CHANNEL_ID: "0"
+  POLL_INTERVAL_S: "10"
+  QUIET_GAP_S: "120"
+  WAVE_ALERT_THRESHOLD: "25"
+  AUTO_PAUSE_ON_BREACH: "true"
+  ALERT_JOINS: "true"
+  DIGEST_HOUR_UTC: "15"   # 8am Pacific
+  # Losses of these are "normal combat" (waves). Anything else destroyed by
+  # the enemy force is a breach. Append DLC turret types here at the Space
+  # Age flip (unknown names alarm rather than stay silent, by design).
+  DEFENSE_ENTITIES: "stone-wall,gate,gun-turret,laser-turret,flamethrower-turret,artillery-turret,radar,land-mine"
+  IGNORED_ENTITIES: "tree,cliff,fish"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: factorio-bridge
+  namespace: factorio
+  labels:
+    app: factorio-bridge
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate            # mounts the RWO game volume
+  selector:
+    matchLabels:
+      app: factorio-bridge
+  template:
+    metadata:
+      labels:
+        app: factorio-bridge
+    spec:
+      serviceAccountName: factorio-bridge
+      # Same pinning as the game: both PVCs are RWO block storage attached to
+      # the games node.
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: terraria
+          effect: NoSchedule
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node.kubernetes.io/instance-type
+                    operator: In
+                    values: ["g6-standard-6"]
+      securityContext:
+        fsGroup: 845
+      containers:
+        - name: bridge
+          image: bholcombe/factorio-bridge:1
+          envFrom:
+            - configMapRef:
+                name: factorio-bridge-config
+          env:
+            - name: RCON_HOST
+              value: "factorio-rcon"
+            - name: RCON_PORT
+              value: "27015"
+            - name: RCONPW
+              valueFrom:
+                secretKeyRef:
+                  name: factorio-secrets
+                  key: RCONPW
+            - name: DISCORD_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: factorio-secrets
+                  key: DISCORD_BOT_TOKEN
+                  optional: true
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: backups
+              mountPath: /backups
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: factorio-data
+        - name: backups
+          persistentVolumeClaim:
+            claimName: factorio-backups

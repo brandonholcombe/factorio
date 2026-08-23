@@ -18,9 +18,19 @@ spec:
     server: https://kubernetes.default.svc
     namespace: factorio
   revisionHistoryLimit: 3
+  # The bridge scales the factorio Deployment to 0/1 during rollbacks; ignore
+  # replica drift so selfHeal doesn't fight it (learned 2026-08-22).
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      name: factorio
+      namespace: factorio
+      jsonPointers:
+        - /spec/replicas
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+      - RespectIgnoreDifferences=true

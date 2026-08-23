@@ -87,8 +87,12 @@ spec:
               set -eu
               mkdir -p /factorio/config
               cp /secrets/server-settings.json /factorio/config/server-settings.json
-              chown 845:845 /factorio/config/server-settings.json
-              echo "server-settings.json installed"
+              # Fixed RCON password so the bridge can connect (the image's only
+              # mechanism is this file; it generates a random one if absent).
+              tr -d '\n' < /secrets/RCONPW > /factorio/config/rconpw
+              chown 845:845 /factorio/config/server-settings.json /factorio/config/rconpw
+              chmod 600 /factorio/config/rconpw
+              echo "server-settings.json + rconpw installed"
           volumeMounts:
             - name: data
               mountPath: /factorio

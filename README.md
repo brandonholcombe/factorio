@@ -72,6 +72,32 @@ kubectl create job --from=cronjob/factorio-backup  backup-now  -n factorio
 kubectl create job --from=cronjob/factorio-updater update-now -n factorio
 ```
 
+## Bridge: monitoring, Discord alerts + control
+
+`bridge/` (image `bholcombe/factorio-bridge`) polls RCON every 10s and turns
+enemy kill-count deltas into a tolerance model: **defense** entities lost
+(walls/turrets, list in the `factorio-bridge-config` ConfigMap) are normal
+waves — digest-only unless a wave exceeds the alert threshold; anything else
+destroyed is a **breach** — immediate alert, and auto-pause if nobody is
+online. Incident history lives in SQLite on the game volume
+(`/factorio/bridge/bridge.db`).
+
+Discord (gateway bot, alerts + commands in one configured channel):
+`/status`, `/pause`, `/resume`, `/save`, `/rollback 5|10|15|20|25` (button
+confirmation; archives current saves to the backups volume, scales the game
+to 0, swaps in the closest autosave, scales back — requires the Application's
+`ignoreDifferences` on `/spec/replicas`). Daily digest at `DIGEST_HOUR_UTC`.
+
+Setup: create a Discord app at discord.com/developers → Bot → Reset Token →
+paste into `DISCORD_BOT_TOKEN` in the gitignored secret; invite via
+OAuth2 URL generator with scopes `bot` + `applications.commands` and
+Send Messages/Embed Links permissions; enable Discord Dev Mode, right-click
+the alert channel → Copy ID → set `DISCORD_CHANNEL_ID` in the ConfigMap.
+Without a token the bridge runs headless (alerts to pod logs).
+
+Known trade-off: stat polling uses `/silent-command`, which flags the save as
+command-used (achievements disabled — already limited by mods anyway).
+
 ## Admin / RCON
 
 RCON listens cluster-internally on TCP 27015; the image generates the password
