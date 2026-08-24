@@ -82,6 +82,23 @@ RESOURCES_LUA = (
     "out[s.name]=acc end rcon.print(helpers.table_to_json(out))"
 )
 
+# /military: artillery shell economy + enemy kill counts (player force).
+MILITARY_LUA = (
+    "/sc local pf=game.forces['player'] local px=defines.flow_precision_index "
+    "local out={made_total=0,fired_total=0,made_1h=0,fired_1h=0,kills={}} "
+    "for _,s in pairs(game.surfaces) do "
+    "local ip=pf.get_item_production_statistics(s) "
+    "out.made_total=out.made_total+(ip.input_counts['artillery-shell'] or 0) "
+    "out.fired_total=out.fired_total+(ip.output_counts['artillery-shell'] or 0) "
+    "out.made_1h=out.made_1h+ip.get_flow_count{name='artillery-shell',"
+    "category='input',precision_index=px.one_hour} "
+    "out.fired_1h=out.fired_1h+ip.get_flow_count{name='artillery-shell',"
+    "category='output',precision_index=px.one_hour} "
+    "local k=pf.get_kill_count_statistics(s) "
+    "for n,c in pairs(k.input_counts) do out.kills[n]=(out.kills[n] or 0)+c end "
+    "end rcon.print(helpers.table_to_json(out))"
+)
+
 # Prototype name lists for Discord autocomplete (cached, hourly refresh).
 ENTITY_NAMES_LUA = (
     "/sc local out={} for n,p in pairs(prototypes.entity) do "
@@ -304,6 +321,9 @@ class Poller:
 
     async def item_names(self) -> list[str]:
         return await self._names("item", ITEM_NAMES_LUA)
+
+    async def military(self) -> dict:
+        return json.loads(await self.cmd(MILITARY_LUA))
 
     async def production_top(self) -> dict[str, float]:
         return json.loads(await self.cmd(PROD_TOP_LUA))

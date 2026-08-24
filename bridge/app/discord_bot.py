@@ -191,6 +191,8 @@ class BridgeBot(discord.Client):
                 "• `/incidents` — recent attacks and breaches\n"
                 "• `/production [item]` — production rates (top 10, or one item over 1m/10m/1h)\n"
                 "• `/research` — current research progress\n"
+                "• `/military` — artillery shells crafted/fired + enemy kill counts\n"
+                "• `/update` — check for a server update now (auto-check runs 4am Pacific)\n"
                 "• `/resources` — tapped ore remaining vs peak (alerts below 20%)\n"
                 "• `/saves` — saves on the server (what `/rollback` can target)\n"
                 "• `/save` — save the map right now\n"
@@ -368,6 +370,71 @@ class BridgeBot(discord.Client):
                 log.exception("production query failed")
                 await itx.followup.send("Couldn't read production stats — check the item "
                                         "name (internal names like `iron-plate`).")
+
+        @tree.command(name="military", description="Artillery + kill statistics")
+        async def military(itx: discord.Interaction):
+            if not right_channel(itx):
+                return await itx.response.send_message("Use the factorio channel.", ephemeral=True)
+            await itx.response.defer()
+            try:
+                m = await self.poller.military()
+            except (OSError, RconError):
+                return await itx.followup.send(RCON_DOWN_MSG)
+            kills = m.get("kills") or {}
+            if isinstance(kills, list):
+                kills = {}
+            groups = {"biters": 0, "spitters": 0, "worms": 0, "nests": 0, "other": 0}
+            for name, c in kills.items():
+                if "biter" in name and "spawner" not in name:
+                    groups["biters"] += c
+                elif "spitter" in name and "spawner" not in name:
+                    groups["spitters"] += c
+                elif "worm" in name:
+                    groups["worms"] += c
+                elif "spawner" in name:
+                    groups["nests"] += c
+                else:
+                    groups["other"] += c
+            total = sum(groups.values())
+            stock = max(0, m["made_total"] - m["fired_total"])
+            breakdown = " · ".join(f"{k} {v:,}" for k, v in groups.items() if v)
+            await itx.followup.send(
+                "🎖️ **Military report**\n"
+                f"🧨 Artillery shells: crafted **{m['made_total']:,.0f}** "
+                f"({m['made_1h']:,.0f} last hour) · fired **{m['fired_total']:,.0f}** "
+                f"({m['fired_1h']:,.0f} last hour) · ~{stock:,.0f} in stock\n"
+                f"💀 Enemies destroyed: **{total:,}** — {breakdown or 'none yet'}\n"
+                "_(The engine tracks kills, not damage dealt — no damage stats exist.)_")
+
+        @tree.command(name="update", description="Check for a server update now (restarts if one exists)")
+        async def update_cmd(itx: discord.Interaction):
+            if not right_channel(itx):
+                return await itx.response.send_message("Use the factorio channel.", ephemeral=True)
+            await itx.response.defer()
+            try:
+                import aiohttp
+                async with aiohttp.ClientSession() as s:
+                    async with s.get(
+                        "https://hub.docker.com/v2/repositories/factoriotools/factorio/tags/stable",
+                        timeout=aiohttp.ClientTimeout(total=20)) as r:
+                        latest = (await r.json()).get("digest", "")
+                pods = await self.rollback.k8s.pods("app=factorio")
+                image_id = ""
+                for pod in pods:
+                    for cs in pod.get("status", {}).get("containerStatuses", []):
+                        image_id = cs.get("imageID", "") or image_id
+                running = "sha256:" + image_id.split("sha256:")[-1] if image_id else ""
+                if not latest or not running:
+                    return await itx.followup.send("Couldn't determine versions — try again.")
+                if latest == running:
+                    return await itx.followup.send("✅ Server already runs the latest stable image.")
+                await self.rollback.k8s.rollout_restart("factorio")
+                await itx.followup.send(
+                    "⬆️ New stable image found — **restarting the server now** "
+                    f"(started by {itx.user.display_name}). Back in ~1 min; the map saves first.")
+            except Exception:
+                log.exception("/update failed")
+                await itx.followup.send("❌ Update check failed — see bridge logs.")
 
         tolerance = app_commands.Group(
             name="tolerance", description="Budgets for expected losses (no breach alert within budget)")

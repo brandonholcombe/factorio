@@ -40,7 +40,12 @@ metadata:
     app: factorio
     component: updater
 spec:
-  schedule: "*/30 * * * *"
+  # Daily at 4am Pacific — restarts (even no-op image rebuilds) shouldn't
+  # interrupt evening play. If a real stable release lands mid-day and blocks
+  # updated Steam clients from joining, anyone can force it with /update in
+  # Discord instead of waiting for 4am.
+  schedule: "0 4 * * *"
+  timeZone: "America/Los_Angeles"
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 900
   successfulJobsHistoryLimit: 1

@@ -30,6 +30,20 @@ class K8s:
                                ssl=self.ssl) as r:
                 r.raise_for_status()
 
+    async def rollout_restart(self, deployment: str) -> None:
+        import json as _json
+        import time
+        url = (f"{self.base}/apis/apps/v1/namespaces/{self.namespace}"
+               f"/deployments/{deployment}")
+        patch = {"spec": {"template": {"metadata": {"annotations": {
+            "kubectl.kubernetes.io/restartedAt":
+                time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}}}}}
+        async with aiohttp.ClientSession() as s:
+            async with s.patch(url, data=_json.dumps(patch),
+                               headers=self._headers("application/strategic-merge-patch+json"),
+                               ssl=self.ssl) as r:
+                r.raise_for_status()
+
     async def pods(self, selector: str) -> list[dict]:
         url = (f"{self.base}/api/v1/namespaces/{self.namespace}/pods"
                f"?labelSelector={selector}")

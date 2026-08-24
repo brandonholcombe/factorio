@@ -26,7 +26,7 @@ metadata:
 rules:
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get"]
+    verbs: ["get", "patch"]   # patch: /update command does a rollout restart
   - apiGroups: ["apps"]
     resources: ["deployments/scale"]
     verbs: ["get", "patch"]
@@ -114,7 +114,7 @@ spec:
         fsGroup: 845
       containers:
         - name: bridge
-          image: bholcombe/factorio-bridge:12
+          image: bholcombe/factorio-bridge:13
           envFrom:
             - configMapRef:
                 name: factorio-bridge-config
