@@ -193,7 +193,8 @@ class BridgeBot(discord.Client):
                 "• `/research` — current research progress\n"
                 "• `/military` — artillery shells crafted/fired + enemy kill counts\n"
                 "• `/update` — check for a server update now (auto-check runs 4am Pacific)\n"
-                "• `/resources` — tapped ore remaining vs peak (alerts below 20%)\n"
+                "• `/resources [resource]` — tapped ore vs peak; pick one for "
+                "drain rate + time-until-dry\n"
                 "• `/saves` — saves on the server (what `/rollback` can target)\n"
                 "• `/save` — save the map right now\n"
                 "• `/pause` / `/resume` — freeze or resume the world (resume also clears a breach auto-pause)\n"
@@ -306,10 +307,41 @@ class BridgeBot(discord.Client):
                              f"({_ts(mtime, 't')})")
             await itx.response.send_message("\n".join(lines))
 
+        def _eta_str(minutes: float) -> str:
+            if minutes < 90:
+                return f"~{minutes:.0f} min"
+            if minutes < 60 * 48:
+                return f"~{minutes / 60:.1f} h"
+            return f"~{minutes / 1440:.1f} days"
+
         @tree.command(name="resources", description="Tapped ore remaining vs peak")
-        async def resources_cmd(itx: discord.Interaction):
+        @app_commands.describe(resource="One resource for detail: drain rate + time until dry")
+        async def resources_cmd(itx: discord.Interaction, resource: str | None = None):
             if not right_channel(itx):
                 return await itx.response.send_message("Use the factorio channel.", ephemeral=True)
+            if resource:
+                name = resource.strip().lower()
+                rows = self.engine.resource_detail(name)
+                if not rows:
+                    return await itx.response.send_message(
+                        f"No tapped `{name}` found (or no scan yet — runs every 5 min).")
+                lines = [f"⛏️ **{name}** (per planet)"]
+                for r in rows:
+                    pct = r["amount"] / r["peak"] if r["peak"] else 1.0
+                    icon = "🔴" if pct < 0.2 else ("🟡" if pct < 0.5 else "🟢")
+                    line = (f"{icon} {r['surface']}: {r['amount']:,.0f} "
+                            f"({pct:.0%} of peak {r['peak']:,.0f}, {r['tiles']} tiles)")
+                    if r["infinite"]:
+                        line += " · infinite resource"
+                    elif r["drain_per_min"] is None:
+                        line += " · drain rate: need one more scan (~5 min)"
+                    elif r["drain_per_min"] <= 0:
+                        line += " · not draining right now"
+                    else:
+                        line += (f" · draining {r['drain_per_min']:,.0f}/min "
+                                 f"→ dry in {_eta_str(r['eta_min'])}")
+                    lines.append(line)
+                return await itx.response.send_message("\n".join(lines))
             rows = self.engine.resource_report()
             if not rows:
                 return await itx.response.send_message(
@@ -499,6 +531,14 @@ class BridgeBot(discord.Client):
         @production.autocomplete("item")
         async def production_ac(itx: discord.Interaction, current: str):
             return _match(await self.poller.item_names(), current)
+
+        @resources_cmd.autocomplete("resource")
+        async def resources_ac(itx: discord.Interaction, current: str):
+            names: set[str] = set()
+            if self.engine.latest_resources:
+                for res in self.engine.latest_resources["surfaces"].values():
+                    names.update(res)
+            return _match(sorted(names), current)
 
         tree.add_command(tolerance)
 

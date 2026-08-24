@@ -114,7 +114,7 @@ spec:
         fsGroup: 845
       containers:
         - name: bridge
-          image: bholcombe/factorio-bridge:13
+          image: bholcombe/factorio-bridge:14
           envFrom:
             - configMapRef:
                 name: factorio-bridge-config

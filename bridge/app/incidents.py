@@ -230,8 +230,10 @@ class IncidentEngine:
 
     # --- tapped resources ------------------------------------------------
     latest_resources: dict | None = None
+    _prev_resources: dict | None = None
 
     async def _resources(self, surfaces: dict) -> None:
+        self._prev_resources = self.latest_resources
         self.latest_resources = {"at": time.time(), "surfaces": surfaces}
         for sname, res in surfaces.items():
             for name, t in res.items():
@@ -260,6 +262,36 @@ class IncidentEngine:
                     " DO UPDATE SET peak=excluded.peak, alerted=excluded.alerted",
                     (sname, name, peak, alerted))
         self.db.commit()
+
+    def resource_detail(self, name: str) -> list[dict]:
+        """Per-surface detail for one resource, with drain rate + ETA derived
+        from the two most recent scans (needs ~10 min of history)."""
+        out = []
+        if not self.latest_resources:
+            return out
+        cur_at = self.latest_resources["at"]
+        for sname, res in self.latest_resources["surfaces"].items():
+            t = res.get(name)
+            if not t:
+                continue
+            row = self.db.execute(
+                "SELECT peak FROM resource_peaks WHERE surface=? AND name=?",
+                (sname, name)).fetchone()
+            peak = row[0] if row else t.get("amount", 0)
+            drain_per_min = eta_min = None
+            prev = self._prev_resources
+            if prev and cur_at - prev["at"] > 60:
+                pt = (prev["surfaces"].get(sname) or {}).get(name)
+                if pt:
+                    delta = pt.get("amount", 0) - t.get("amount", 0)
+                    drain_per_min = delta / ((cur_at - prev["at"]) / 60)
+                    if drain_per_min > 0:
+                        eta_min = t.get("amount", 0) / drain_per_min
+            out.append({
+                "surface": sname, "amount": t.get("amount", 0), "peak": peak,
+                "tiles": t.get("tiles", 0), "infinite": bool(t.get("infinite")),
+                "drain_per_min": drain_per_min, "eta_min": eta_min})
+        return out
 
     def resource_report(self) -> list[dict]:
         if not self.latest_resources:
