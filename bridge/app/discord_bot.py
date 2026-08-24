@@ -16,6 +16,12 @@ from .poller import Poller
 log = logging.getLogger("discord")
 
 
+def _ts(t: float, style: str = "f") -> str:
+    """Discord timestamp markup — renders in each viewer's local timezone.
+    Styles: t=time, f=date+time, R=relative."""
+    return f"<t:{int(t)}:{style}>"
+
+
 def _fmt_entities(entities: dict[str, int], limit: int = 8) -> str:
     items = sorted(entities.items(), key=lambda kv: -kv[1])
     body = ", ".join(f"{n} ×{c}" for n, c in items[:limit])
@@ -261,9 +267,9 @@ class BridgeBot(discord.Client):
                 return await itx.response.send_message("📗 No recorded incidents yet.")
             lines = ["📕 **Recent incidents** (newest first)"]
             for r in rows:
-                when = dt.datetime.fromtimestamp(r["ended_at"]).strftime("%b %d %H:%M")
                 icon = "🔴" if r["kind"] == "breach" else "⚔️"
-                lines.append(f"{icon} {when} · {r['kind']} on {r['surface']} — "
+                lines.append(f"{icon} {_ts(r['ended_at'])} ({_ts(r['ended_at'], 'R')}) · "
+                             f"{r['kind']} on {r['surface']} — "
                              f"{_fmt_entities(r['entities'], limit=4)}")
             await itx.response.send_message("\n".join(lines))
 
@@ -276,9 +282,8 @@ class BridgeBot(discord.Client):
                 return await itx.response.send_message("No saves found.")
             lines = ["💾 **Saves on the server** (newest first)"]
             for path, mtime in saves:
-                age = (time.time() - mtime) / 60
-                lines.append(f"• `{os.path.basename(path)}` — {age:.0f} min ago "
-                             f"({dt.datetime.fromtimestamp(mtime).strftime('%H:%M:%S')})")
+                lines.append(f"• `{os.path.basename(path)}` — {_ts(mtime, 'R')} "
+                             f"({_ts(mtime, 't')})")
             await itx.response.send_message("\n".join(lines))
 
         @tree.command(name="resources", description="Tapped ore remaining vs peak")
@@ -425,11 +430,10 @@ class BridgeBot(discord.Client):
             if picked is None:
                 return await itx.response.send_message("No saves found — cannot roll back.")
             path, mtime = picked
-            age_min = (time.time() - mtime) / 60
             view = ConfirmRollback(self, path)
             await itx.response.send_message(
-                f"⚠️ Roll back to `{os.path.basename(path)}` from **{age_min:.0f} min ago** "
-                f"({dt.datetime.fromtimestamp(mtime).strftime('%H:%M:%S')} server time)?\n"
+                f"⚠️ Roll back to `{os.path.basename(path)}` from {_ts(mtime, 'R')} "
+                f"({_ts(mtime, 't')})?\n"
                 "Everyone online will be disconnected; progress after that save is lost "
                 "(current state is archived first).", view=view)
 
