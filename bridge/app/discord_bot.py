@@ -257,9 +257,11 @@ class BridgeBot(discord.Client):
             except (OSError, RconError):
                 return await itx.response.send_message(RCON_DOWN_MSG)
             msg = f"⏸️ Paused by {itx.user.display_name}."
-            if self._server_empty():
+            if config.GAME_AUTO_PAUSE and self._server_empty():
                 msg += (" (Nobody is online, so the world was already frozen by "
                         "auto-pause — this also blocks the next joiner from unpausing it.)")
+            elif self._server_empty():
+                msg += " World locked until `/resume` — joining won't unpause it."
             await itx.response.send_message(msg)
 
         @tree.command(name="resume", description="Resume the game world")
@@ -271,10 +273,11 @@ class BridgeBot(discord.Client):
             except (OSError, RconError):
                 return await itx.response.send_message(RCON_DOWN_MSG)
             msg = f"▶️ Resumed by {itx.user.display_name}."
-            if self._server_empty():
+            if config.GAME_AUTO_PAUSE and self._server_empty():
                 msg += ("\n💤 Note: nobody is online, so the world stays idle under the "
-                        "server's auto-pause until someone joins. (That's the setting "
-                        "we flip for 24/7 mode.)")
+                        "server's auto-pause until someone joins.")
+            elif self._server_empty():
+                msg += " The factory runs on, unsupervised — the Overseer is watching."
             await itx.response.send_message(msg)
 
         @tree.command(name="save", description="Save the game now")
