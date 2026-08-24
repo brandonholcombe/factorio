@@ -61,12 +61,25 @@ class BridgeBot(discord.Client):
         s = self.poller.snapshot
         return bool(s) and not s["players"]
 
-    async def _send(self, text: str):
-        if self.channel_ is not None:
-            try:
+    # Severity palette for alert embeds — the colored bar makes bot traffic
+    # scannable against human chat.
+    RED = 0xE74C3C       # breach, server down
+    AMBER = 0xE67E22     # active attack, health warnings, resource low
+    GREEN = 0x2ECC71     # repelled / recovered / back up
+    BLUE = 0x3498DB      # info: research, digest, rollback progress
+    PURPLE = 0x9B59B6    # celebrations (rockets)
+    GRAY = 0x95A5A6      # deaths, minor notes
+
+    async def _send(self, text: str, color: int | None = None):
+        if self.channel_ is None:
+            return
+        try:
+            if color is None:
                 await self.channel_.send(text)
-            except discord.DiscordException:
-                log.exception("failed to send alert")
+            else:
+                await self.channel_.send(embed=discord.Embed(description=text, color=color))
+        except discord.DiscordException:
+            log.exception("failed to send alert")
 
     # --- alerts ----------------------------------------------------------
     async def _notify_loop(self):
@@ -84,58 +97,58 @@ class BridgeBot(discord.Client):
                             f"Raise it with `/tolerance add` if this is still expected.")
                 if ev["auto_paused"]:
                     msg += "\n⏸️ Nobody online — **world paused**. `/resume` when handled."
-                await self._send(msg)
+                await self._send(msg, self.RED)
             elif kind == "breach_closed":
                 await self._send(
                     f"🟠 Breach on {ev['surface']} over after {ev['duration_s']}s. "
-                    f"Total lost: {_fmt_entities(ev['entities'])}")
+                    f"Total lost: {_fmt_entities(ev['entities'])}", self.AMBER)
             elif kind == "big_wave":
                 await self._send(
                     f"⚔️ Heavy attack on {ev['surface']} — defenses lost: "
-                    f"{_fmt_entities(ev['entities'])} (holding so far)")
+                    f"{_fmt_entities(ev['entities'])} (holding so far)", self.AMBER)
             elif kind == "big_wave_closed":
                 await self._send(
                     f"🛡️ Attack on {ev['surface']} repelled after {ev['duration_s']}s. "
-                    f"Defense losses: {_fmt_entities(ev['entities'])}")
+                    f"Defense losses: {_fmt_entities(ev['entities'])}", self.GREEN)
             elif kind == "wave_closed":
                 pass  # digest-only
             elif kind == "death":
-                await self._send(f"💀 A player died on {ev['surface']}.")
+                await self._send(f"💀 A player died on {ev['surface']}.", self.GRAY)
             elif kind == "join":
-                await self._send(f"🟢 **{ev['player']}** joined.")
+                await self._send(f"🟢 **{ev['player']}** joined.", self.GRAY)
             elif kind == "leave":
-                await self._send(f"⚪ **{ev['player']}** left.")
+                await self._send(f"⚪ **{ev['player']}** left.", self.GRAY)
             elif kind == "server_down" and not in_rollback:
-                await self._send("🚨 Server unreachable (RCON down for 60s+).")
+                await self._send("🚨 Server unreachable (RCON down for 60s+).", self.RED)
             elif kind == "server_up" and not in_rollback:
-                await self._send("✅ Server is back.")
+                await self._send("✅ Server is back.", self.GREEN)
             elif kind == "rocket":
                 n = ev["total"]
                 prefix = "🚀🎉 **FIRST ROCKET LAUNCHED!**" if n == ev["delta"] else "🚀 Rocket launched!"
-                await self._send(f"{prefix} (total: {n})")
+                await self._send(f"{prefix} (total: {n})", self.PURPLE)
             elif kind == "research_done":
-                await self._send(f"🔬 Research complete: **{ev['name']}**")
+                await self._send(f"🔬 Research complete: **{ev['name']}**", self.BLUE)
             elif kind == "evolution":
                 await self._send(
                     f"🧬 Evolution on {ev['surface']} crossed **{ev['threshold']:.0%}** "
-                    f"(now {ev['value']:.1%}) — biters are getting tougher.")
+                    f"(now {ev['value']:.1%}) — biters are getting tougher.", self.AMBER)
             elif kind == "ups_low":
                 await self._send(f"🐌 Server struggling: UPS down to {ev['ups']:.0f} "
-                                 "(sustained). Big fights or a megabase moment?")
+                                 "(sustained). Big fights or a megabase moment?", self.AMBER)
             elif kind == "ups_ok":
-                await self._send(f"💨 UPS recovered ({ev['ups']:.0f}).")
+                await self._send(f"💨 UPS recovered ({ev['ups']:.0f}).", self.GREEN)
             elif kind == "power_low":
                 await self._send(
                     f"⚡ **Brownout on {ev['surface']}** — {ev['count']} sampled machines "
-                    "are low on power. The factory is starving.")
+                    "are low on power. The factory is starving.", self.AMBER)
             elif kind == "power_ok":
-                await self._send(f"🔌 Power restored on {ev['surface']}.")
+                await self._send(f"🔌 Power restored on {ev['surface']}.", self.GREEN)
             elif kind == "resource_low":
                 await self._send(
                     f"⛏️ **{ev['name']}** on {ev['surface']} is running out — "
                     f"{ev['amount']:,.0f} left in tapped patches "
                     f"(**{ev['pct']:.0%}** of the {ev['peak']:,.0f} peak). "
-                    "Time to scout a new patch.")
+                    "Time to scout a new patch.", self.AMBER)
 
     # --- daily digest ----------------------------------------------------
     async def _digest_loop(self):
@@ -146,7 +159,7 @@ class BridgeBot(discord.Client):
                 target += dt.timedelta(days=1)
             await asyncio.sleep((target - now).total_seconds())
             try:
-                await self._send(self._digest_text())
+                await self._send(self._digest_text(), self.BLUE)
             except Exception:
                 log.exception("digest failed")
 
@@ -575,13 +588,16 @@ class ConfirmRollback(discord.ui.View):
         await itx.response.edit_message(
             content=f"⏪ Rolling back (started by {itx.user.display_name})…", view=None)
         try:
-            await self.bot.rollback.run(self.save_path, self.bot._send)
-            await self.bot._send("✅ Rollback complete — server is up, rejoin away.")
+            await self.bot.rollback.run(
+                self.save_path, lambda t: self.bot._send(t, BridgeBot.BLUE))
+            await self.bot._send("✅ Rollback complete — server is up, rejoin away.",
+                                 BridgeBot.GREEN)
             self.bot.engine.note("rollback", os.path.basename(self.save_path))
         except Exception as exc:
             log.exception("rollback failed")
             await self.bot._send(f"❌ Rollback FAILED: {exc}. Check the bridge logs; "
-                                 "the pre-rollback archive on the backups volume is intact.")
+                                 "the pre-rollback archive on the backups volume is intact.",
+                                 BridgeBot.RED)
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
     async def cancel(self, itx: discord.Interaction, _button: discord.ui.Button):
