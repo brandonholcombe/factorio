@@ -75,6 +75,11 @@ Commands (`/help` in-channel lists these too):
 | `/production [item]` | top-10 rates last minute, or one item over 1m/10m/1h |
 | `/research` | current tech + progress bar |
 | `/resources` | tapped ore vs peak, worst first (see below) |
+| `/military` | artillery shells crafted/fired/stock + kills by class |
+| `/map [surface]` | current base map image (rendered from snapshots) |
+| `/timelapse [surface]` | base-expansion GIF (6h frames, shared bounds) |
+| `/update` | check for a server update now (auto-check: 4am Pacific) |
+| `/tolerance add\|remove\|list` | budgets for expected losses (autocompleted) |
 | `/saves` | saves on the server with ages (rollback targets) |
 | `/save` | save the map now |
 | `/pause` / `/resume` | freeze/resume the world (resume clears auto-pause) |
