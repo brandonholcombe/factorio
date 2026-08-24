@@ -121,6 +121,7 @@ class IncidentEngine:
     async def _losses(self, event: dict) -> None:
         surface, deltas = event["surface"], event["deltas"]
         buckets: dict[str, dict[str, int]] = {}
+        tol_context: dict[str, dict] = {}
         for name, count in deltas.items():
             cls = self.classify(name)
             if cls == "ignored":
@@ -129,10 +130,14 @@ class IncidentEngine:
                 self.note("death", json.dumps({"surface": surface, "count": count}))
                 await self.notify.put({"kind": "death", "surface": surface, "count": count})
                 continue
-            if cls == "production" and self._tolerated(name, count, event["at"]):
-                self.note("tolerated", json.dumps(
-                    {"surface": surface, "name": name, "count": count}))
-                continue
+            if cls == "production":
+                ok, ctx = self._tolerated(name, count, event["at"])
+                if ok:
+                    self.note("tolerated", json.dumps(
+                        {"surface": surface, "name": name, "count": count}))
+                    continue
+                if ctx is not None:
+                    tol_context[name] = ctx
             buckets.setdefault("wave" if cls == "defense" else "breach", {})[name] = count
 
         for inc_kind, entities in buckets.items():
@@ -158,6 +163,7 @@ class IncidentEngine:
                 await self.notify.put({
                     "kind": "breach", "surface": surface,
                     "entities": dict(inc.entities), "auto_paused": auto_paused,
+                    "tolerance_context": dict(tol_context),
                 })
             elif inc.kind == "wave" and not inc.alerted and inc.total >= config.WAVE_ALERT_THRESHOLD:
                 inc.alerted = True
@@ -185,15 +191,20 @@ class IncidentEngine:
                 })
 
     # --- tolerance rules -------------------------------------------------
-    def _tolerated(self, name: str, count: int, at: float) -> bool:
+    def _tolerated(self, name: str, count: int, at: float) -> tuple[bool, dict | None]:
+        """(within_budget, context). Context describes the rolling window so a
+        budget-crossing alert can tell the whole story, not just this delta."""
         rule = self.tolerances.get(name)
         if rule is None:
-            return False
+            return False, None
         max_count, window_s = rule
         hits = [(t, c) for t, c in self._tol_hits.get(name, []) if at - t < window_s]
         hits.append((at, count))
         self._tol_hits[name] = hits
-        return sum(c for _, c in hits) <= max_count
+        window_total = sum(c for _, c in hits)
+        context = {"window_total": window_total, "budget": max_count,
+                   "window_min": window_s // 60}
+        return window_total <= max_count, context
 
     def set_tolerance(self, name: str, max_count: int, window_s: int) -> None:
         self.tolerances[name] = (max_count, window_s)

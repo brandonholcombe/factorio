@@ -73,6 +73,11 @@ class BridgeBot(discord.Client):
             if kind == "breach":
                 msg = (f"🔴 **BREACH on {ev['surface']}** — destroyed: "
                        f"{_fmt_entities(ev['entities'])}")
+                for name, c in (ev.get("tolerance_context") or {}).items():
+                    msg += (f"\n📊 `{name}` blew its tolerance budget: "
+                            f"**{c['window_total']} destroyed in the last "
+                            f"{c['window_min']} min** (budget {c['budget']}). "
+                            f"Raise it with `/tolerance add` if this is still expected.")
                 if ev["auto_paused"]:
                     msg += "\n⏸️ Nobody online — **world paused**. `/resume` when handled."
                 await self._send(msg)
