@@ -114,7 +114,7 @@ spec:
         fsGroup: 845
       containers:
         - name: bridge
-          image: bholcombe/factorio-bridge:11
+          image: bholcombe/factorio-bridge:12
           envFrom:
             - configMapRef:
                 name: factorio-bridge-config
@@ -146,6 +146,17 @@ spec:
             limits:
               cpu: "250m"
               memory: "256Mi"
+          # The poll loop touches /tmp/heartbeat while iterating; a silent
+          # hang (vs a crash, which exits on its own) gets the pod restarted.
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - find /tmp/heartbeat -newermt '-90 seconds' | grep -q .
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 3
       volumes:
         - name: data
           persistentVolumeClaim:

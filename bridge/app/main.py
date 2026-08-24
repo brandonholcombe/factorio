@@ -16,6 +16,18 @@ logging.basicConfig(level=logging.INFO,
 log = logging.getLogger("main")
 
 
+async def heartbeat(poller: Poller) -> None:
+    """Touch /tmp/heartbeat while the poll loop is iterating — the liveness
+    probe restarts the pod if the loop silently hangs. A DOWN game server is
+    NOT unhealthy (the loop keeps iterating through failures by design)."""
+    import time
+    while True:
+        if time.time() - poller.last_loop_at < 60:
+            with open("/tmp/heartbeat", "w") as f:
+                f.write(str(time.time()))
+        await asyncio.sleep(20)
+
+
 async def headless_notify(notify: asyncio.Queue) -> None:
     while True:
         ev = await notify.get()
@@ -30,7 +42,7 @@ async def amain() -> None:
     poller = Poller(events)
     engine = IncidentEngine(events, notify, poller)
 
-    tasks = [poller.run(), poller.resource_loop(), engine.run()]
+    tasks = [poller.run(), poller.resource_loop(), engine.run(), heartbeat(poller)]
     if config.DISCORD_BOT_TOKEN and config.DISCORD_CHANNEL_ID:
         from .discord_bot import BridgeBot
         bot = BridgeBot(poller, engine, notify)

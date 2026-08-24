@@ -12,6 +12,10 @@ from discord import app_commands
 from . import config, rollback
 from .incidents import IncidentEngine
 from .poller import Poller
+from .rcon import RconError
+
+RCON_DOWN_MSG = ("⚠️ Can't reach the game server right now — it's likely "
+                 "mid-restart (updates take ~1 min). Try again shortly.")
 
 log = logging.getLogger("discord")
 
@@ -231,7 +235,10 @@ class BridgeBot(discord.Client):
         async def pause(itx: discord.Interaction):
             if not right_channel(itx):
                 return await itx.response.send_message("Use the factorio channel.", ephemeral=True)
-            await self.poller.set_paused(True)
+            try:
+                await self.poller.set_paused(True)
+            except (OSError, RconError):
+                return await itx.response.send_message(RCON_DOWN_MSG)
             msg = f"⏸️ Paused by {itx.user.display_name}."
             if self._server_empty():
                 msg += (" (Nobody is online, so the world was already frozen by "
@@ -242,7 +249,10 @@ class BridgeBot(discord.Client):
         async def resume(itx: discord.Interaction):
             if not right_channel(itx):
                 return await itx.response.send_message("Use the factorio channel.", ephemeral=True)
-            await self.poller.set_paused(False)
+            try:
+                await self.poller.set_paused(False)
+            except (OSError, RconError):
+                return await itx.response.send_message(RCON_DOWN_MSG)
             msg = f"▶️ Resumed by {itx.user.display_name}."
             if self._server_empty():
                 msg += ("\n💤 Note: nobody is online, so the world stays idle under the "
@@ -254,7 +264,10 @@ class BridgeBot(discord.Client):
         async def save(itx: discord.Interaction):
             if not right_channel(itx):
                 return await itx.response.send_message("Use the factorio channel.", ephemeral=True)
-            await self.poller.save()
+            try:
+                await self.poller.save()
+            except (OSError, RconError):
+                return await itx.response.send_message(RCON_DOWN_MSG)
             await itx.response.send_message("💾 Map saved.")
 
         @tree.command(name="report", description="Last-24h factory report, on demand")

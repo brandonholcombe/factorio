@@ -120,8 +120,11 @@ class Poller:
         self._power_alerted: set[str] = set()
         self.ups: float | None = None
 
+    last_loop_at: float = 0.0
+
     async def run(self) -> None:
         while True:
+            self.last_loop_at = time.time()
             try:
                 raw = await self.cmd(POLL_LUA)
                 self._handle(json.loads(raw))
