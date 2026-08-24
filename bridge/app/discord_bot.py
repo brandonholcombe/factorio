@@ -9,7 +9,7 @@ import time
 import discord
 from discord import app_commands
 
-from . import config, rollback
+from . import config, rollback, timelapse
 from .incidents import IncidentEngine
 from .poller import Poller
 from .rcon import RconError
@@ -205,6 +205,7 @@ class BridgeBot(discord.Client):
                 "• `/production [item]` — production rates (top 10, or one item over 1m/10m/1h)\n"
                 "• `/research` — current research progress\n"
                 "• `/military` — artillery shells crafted/fired + enemy kill counts\n"
+                "• `/map` — current base map image · `/timelapse` — expansion GIF (6h frames)\n"
                 "• `/update` — check for a server update now (auto-check runs 4am Pacific)\n"
                 "• `/resources [resource]` — tapped ore vs peak; pick one for "
                 "drain rate + time-until-dry\n"
@@ -415,6 +416,42 @@ class BridgeBot(discord.Client):
                 log.exception("production query failed")
                 await itx.followup.send("Couldn't read production stats — check the item "
                                         "name (internal names like `iron-plate`).")
+
+        @tree.command(name="map", description="Current base map (rendered from the latest snapshot)")
+        @app_commands.describe(surface="Planet (default nauvis)")
+        async def map_cmd(itx: discord.Interaction, surface: str = "nauvis"):
+            if not right_channel(itx):
+                return await itx.response.send_message("Use the factorio channel.", ephemeral=True)
+            await itx.response.defer()
+            buf = await asyncio.to_thread(
+                timelapse.build_map_png, surface.strip().lower(), config.MAP_MAX_PX)
+            if buf is None:
+                return await itx.followup.send(
+                    "No snapshot yet — the collector runs every 6h (first one lands "
+                    "shortly after deploy).")
+            await itx.followup.send(file=discord.File(buf, filename=f"{surface}-map.png"))
+
+        @tree.command(name="timelapse", description="Base expansion timelapse (GIF from snapshots)")
+        @app_commands.describe(surface="Planet (default nauvis)")
+        async def timelapse_cmd(itx: discord.Interaction, surface: str = "nauvis"):
+            if not right_channel(itx):
+                return await itx.response.send_message("Use the factorio channel.", ephemeral=True)
+            await itx.response.defer()
+            result = await asyncio.to_thread(
+                timelapse.build_timelapse_gif, surface.strip().lower(),
+                config.TIMELAPSE_MAX_FRAMES, config.TIMELAPSE_MAX_PX)
+            if result is None:
+                return await itx.followup.send(
+                    "Need at least 2 snapshots (they're 6h apart) — check back later.")
+            buf, n = result
+            size_mb = buf.getbuffer().nbytes / 1e6
+            if size_mb > 7.8:
+                return await itx.followup.send(
+                    f"Timelapse is {size_mb:.1f}MB — over Discord's upload limit. "
+                    "I can lower TIMELAPSE_MAX_PX/MAX_FRAMES in config if this persists.")
+            await itx.followup.send(
+                content=f"🎞️ {n} frames, 6h apart — the factory grows.",
+                file=discord.File(buf, filename=f"{surface}-timelapse.gif"))
 
         @tree.command(name="military", description="Artillery + kill statistics")
         async def military(itx: discord.Interaction):

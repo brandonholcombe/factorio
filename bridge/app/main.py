@@ -10,6 +10,7 @@ import logging
 from . import config
 from .incidents import IncidentEngine
 from .poller import Poller
+from .timelapse import SnapshotCollector
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -42,7 +43,9 @@ async def amain() -> None:
     poller = Poller(events)
     engine = IncidentEngine(events, notify, poller)
 
-    tasks = [poller.run(), poller.resource_loop(), engine.run(), heartbeat(poller)]
+    collector = SnapshotCollector(poller)
+    tasks = [poller.run(), poller.resource_loop(), engine.run(), heartbeat(poller),
+             collector.run()]
     if config.DISCORD_BOT_TOKEN and config.DISCORD_CHANNEL_ID:
         from .discord_bot import BridgeBot
         bot = BridgeBot(poller, engine, notify)

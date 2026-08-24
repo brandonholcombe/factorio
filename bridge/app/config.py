@@ -58,6 +58,12 @@ RESOURCE_POLL_S = float(os.environ.get("RESOURCE_POLL_S", "300"))
 RESOURCE_ALERT_PCT = float(os.environ.get("RESOURCE_ALERT_PCT", "0.20"))
 RESOURCE_MIN_PEAK = int(os.environ.get("RESOURCE_MIN_PEAK", "10000"))
 
+# Timelapse: entity-snapshot cadence and render sizes.
+SNAPSHOT_INTERVAL_S = float(os.environ.get("SNAPSHOT_INTERVAL_S", "21600"))  # 6h
+MAP_MAX_PX = int(os.environ.get("MAP_MAX_PX", "1400"))
+TIMELAPSE_MAX_PX = int(os.environ.get("TIMELAPSE_MAX_PX", "900"))
+TIMELAPSE_MAX_FRAMES = int(os.environ.get("TIMELAPSE_MAX_FRAMES", "100"))
+
 # Health alerts: sustained-condition thresholds (polls are POLL_INTERVAL_S apart).
 UPS_ALERT_BELOW = float(os.environ.get("UPS_ALERT_BELOW", "55"))
 UPS_ALERT_POLLS = int(os.environ.get("UPS_ALERT_POLLS", "6"))       # ~1 min

@@ -114,7 +114,7 @@ spec:
         fsGroup: 845
       containers:
         - name: bridge
-          image: bholcombe/factorio-bridge:15
+          image: bholcombe/factorio-bridge:16
           envFrom:
             - configMapRef:
                 name: factorio-bridge-config
@@ -144,8 +144,8 @@ spec:
               cpu: "100m"
               memory: "128Mi"
             limits:
-              cpu: "250m"
-              memory: "256Mi"
+              cpu: "1"
+              memory: "1536Mi"
           # The poll loop touches /tmp/heartbeat while iterating; a silent
           # hang (vs a crash, which exits on its own) gets the pod restarted.
           livenessProbe:
