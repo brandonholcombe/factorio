@@ -481,14 +481,39 @@ class BridgeBot(discord.Client):
                 else:
                     groups["other"] += c
             total = sum(groups.values())
-            stock = max(0, m["made_total"] - m["fired_total"])
             breakdown = " · ".join(f"{k} {v:,}" for k, v in groups.items() if v)
+
+            ammo = m.get("ammo") or {}
+            shells = ammo.get("artillery-shell", {})
+            stock = m.get("shell_stock", 0)
+            expended = max(0, shells.get("made", 0) - stock)
+            ammo_lines = []
+            for name, t in sorted(ammo.items(), key=lambda kv: -kv[1].get("used_1h", 0)):
+                if name == "artillery-shell" or (t.get("used_1h", 0) < 1 and t.get("made_1h", 0) < 1):
+                    continue
+                ammo_lines.append(f"{name} {t['made_1h']:,.0f}→{t['used_1h']:,.0f}")
+            ammo_str = (" · ".join(ammo_lines[:6])) or "quiet hour on the ammo belts"
+
+            losses = m.get("losses") or {}
+            if isinstance(losses, list):
+                losses = {}
+            structures_lost = sum(
+                c for n, c in losses.items()
+                if self.engine.classify(n) in ("defense", "production"))
+            ratio = f"{total / structures_lost:,.0f}:1" if structures_lost else "∞"
+
             await itx.followup.send(
                 "🎖️ **Military report**\n"
-                f"🧨 Artillery shells: crafted **{m['made_total']:,.0f}** "
-                f"({m['made_1h']:,.0f} last hour) · fired **{m['fired_total']:,.0f}** "
-                f"({m['fired_1h']:,.0f} last hour) · ~{stock:,.0f} in stock\n"
-                f"💀 Enemies destroyed: **{total:,}** — {breakdown or 'none yet'}\n"
+                f"🧨 Artillery shells: crafted **{shells.get('made', 0):,.0f}** "
+                f"({shells.get('made_1h', 0):,.0f}/h) · in the field **{stock:,.0f}** · "
+                f"expended **~{expended:,.0f}**\n"
+                f"   _(expended = crafted − live stock scan; the game's own stats miss "
+                f"wagon fire — they only saw {shells.get('used', 0):,.0f})_\n"
+                f"🔫 Ammo last hour (made→used): {ammo_str}\n"
+                f"💀 Enemies destroyed: **{total:,}** ({m.get('kills_1h', 0):,.0f} last hour) "
+                f"— {breakdown or 'none yet'}\n"
+                f"⚖️ Exchange rate: {total:,} kills vs {structures_lost:,} structures "
+                f"lost (**{ratio}**)\n"
                 "_(The engine tracks kills, not damage dealt — no damage stats exist.)_")
 
         @tree.command(name="update", description="Check for a server update now (restarts if one exists)")

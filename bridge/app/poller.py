@@ -82,20 +82,36 @@ RESOURCES_LUA = (
     "out[s.name]=acc end rcon.print(helpers.table_to_json(out))"
 )
 
-# /military: artillery shell economy + enemy kill counts (player force).
+# /military. Notable: "fired" can NOT come from consumption stats — artillery
+# wagons fire off the books and breach-destroyed shells vanish uncounted — so
+# shells expended = crafted minus a live world scan of shells in inventories.
 MILITARY_LUA = (
-    "/sc local pf=game.forces['player'] local px=defines.flow_precision_index "
-    "local out={made_total=0,fired_total=0,made_1h=0,fired_1h=0,kills={}} "
+    "/sc local pf=game.forces['player'] local ef=game.forces['enemy'] "
+    "local px=defines.flow_precision_index "
+    "local AMMO={'firearm-magazine','piercing-rounds-magazine',"
+    "'uranium-rounds-magazine','rocket','explosive-rocket','grenade',"
+    "'cluster-grenade','cannon-shell','explosive-cannon-shell',"
+    "'flamethrower-ammo','artillery-shell'} "
+    "local out={ammo={},kills={},kills_1h=0,losses={},shell_stock=0} "
     "for _,s in pairs(game.surfaces) do "
     "local ip=pf.get_item_production_statistics(s) "
-    "out.made_total=out.made_total+(ip.input_counts['artillery-shell'] or 0) "
-    "out.fired_total=out.fired_total+(ip.output_counts['artillery-shell'] or 0) "
-    "out.made_1h=out.made_1h+ip.get_flow_count{name='artillery-shell',"
-    "category='input',precision_index=px.one_hour} "
-    "out.fired_1h=out.fired_1h+ip.get_flow_count{name='artillery-shell',"
-    "category='output',precision_index=px.one_hour} "
+    "for _,a in pairs(AMMO) do "
+    "local t=out.ammo[a] or {made=0,used=0,made_1h=0,used_1h=0} "
+    "t.made=t.made+(ip.input_counts[a] or 0) "
+    "t.used=t.used+(ip.output_counts[a] or 0) "
+    "t.made_1h=t.made_1h+ip.get_flow_count{name=a,category='input',precision_index=px.one_hour} "
+    "t.used_1h=t.used_1h+ip.get_flow_count{name=a,category='output',precision_index=px.one_hour} "
+    "out.ammo[a]=t end "
     "local k=pf.get_kill_count_statistics(s) "
-    "for n,c in pairs(k.input_counts) do out.kills[n]=(out.kills[n] or 0)+c end "
+    "for n,c in pairs(k.input_counts) do out.kills[n]=(out.kills[n] or 0)+c "
+    "out.kills_1h=out.kills_1h+k.get_flow_count{name=n,category='input',precision_index=px.one_hour} end "
+    "local el=ef.get_kill_count_statistics(s) "
+    "for n,c in pairs(el.input_counts) do out.losses[n]=(out.losses[n] or 0)+c end "
+    "for _,e in pairs(s.find_entities_filtered{type={'artillery-turret',"
+    "'artillery-wagon','container','logistic-container','cargo-wagon','car','character'}}) do "
+    "for i=1,7 do local inv=e.get_inventory(i) if inv then "
+    "local ok,n=pcall(function() return inv.get_item_count('artillery-shell') end) "
+    "if ok then out.shell_stock=out.shell_stock+n end end end end "
     "end rcon.print(helpers.table_to_json(out))"
 )
 
