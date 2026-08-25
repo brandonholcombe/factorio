@@ -505,8 +505,8 @@ class BridgeBot(discord.Client):
             await itx.followup.send(
                 "🎖️ **Military report**\n"
                 f"🧨 Artillery shells: crafted **{shells.get('made', 0):,.0f}** "
-                f"({shells.get('made_1h', 0):,.0f}/h) · in the field **{stock:,.0f}** · "
-                f"expended **~{expended:,.0f}**\n"
+                f"({shells.get('made_1h', 0):,.0f} in the last hour) · "
+                f"in the field **{stock:,.0f}** · expended **~{expended:,.0f}**\n"
                 f"   _(expended = crafted − live stock scan; the game's own stats miss "
                 f"wagon fire — they only saw {shells.get('used', 0):,.0f})_\n"
                 f"🔫 Ammo last hour (made→used): {ammo_str}\n"
