@@ -70,6 +70,10 @@ class IncidentEngine:
             "CREATE TABLE IF NOT EXISTS tolerances ("
             "name TEXT PRIMARY KEY, max_count INTEGER, window_s INTEGER)"
         )
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS resource_history ("
+            "at REAL, surface TEXT, name TEXT, amount REAL)"
+        )
         db.commit()
         return db
 
@@ -234,7 +238,14 @@ class IncidentEngine:
 
     async def _resources(self, surfaces: dict) -> None:
         self._prev_resources = self.latest_resources
-        self.latest_resources = {"at": time.time(), "surfaces": surfaces}
+        now = time.time()
+        self.latest_resources = {"at": now, "surfaces": surfaces}
+        for sname, res in surfaces.items():
+            for name, t in res.items():
+                self.db.execute(
+                    "INSERT INTO resource_history (at, surface, name, amount)"
+                    " VALUES (?,?,?,?)", (now, sname, name, t.get("amount", 0)))
+        self.db.execute("DELETE FROM resource_history WHERE at < ?", (now - 7 * 86400,))
         for sname, res in surfaces.items():
             for name, t in res.items():
                 amount = t.get("amount", 0)
@@ -287,10 +298,27 @@ class IncidentEngine:
                     drain_per_min = delta / ((cur_at - prev["at"]) / 60)
                     if drain_per_min > 0:
                         eta_min = t.get("amount", 0) / drain_per_min
+            # 24h decomposition from scan history: consecutive negative deltas
+            # are mining drain; positive deltas are newly tapped patches. This
+            # is what makes "why doesn't the total drop?" self-explanatory —
+            # expansion masks depletion in the aggregate.
+            mined_24h = tapped_24h = 0.0
+            prev_amt = None
+            for (amt,) in self.db.execute(
+                    "SELECT amount FROM resource_history WHERE surface=? AND name=?"
+                    " AND at >= ? ORDER BY at", (sname, name, cur_at - 86400)):
+                if prev_amt is not None:
+                    d = amt - prev_amt
+                    if d < 0:
+                        mined_24h += -d
+                    else:
+                        tapped_24h += d
+                prev_amt = amt
             out.append({
                 "surface": sname, "amount": t.get("amount", 0), "peak": peak,
                 "tiles": t.get("tiles", 0), "infinite": bool(t.get("infinite")),
-                "drain_per_min": drain_per_min, "eta_min": eta_min})
+                "drain_per_min": drain_per_min, "eta_min": eta_min,
+                "mined_24h": mined_24h, "tapped_24h": tapped_24h})
         return out
 
     def resource_report(self) -> list[dict]:

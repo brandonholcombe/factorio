@@ -357,6 +357,9 @@ class BridgeBot(discord.Client):
                     else:
                         line += (f" · draining {r['drain_per_min']:,.0f}/min "
                                  f"→ dry in {_eta_str(r['eta_min'])}")
+                    if r.get("mined_24h") or r.get("tapped_24h"):
+                        line += (f"\n   └ last 24h: ⛏️ {r['mined_24h']:,.0f} mined out"
+                                 f" · ➕ {r['tapped_24h']:,.0f} newly tapped")
                     lines.append(line)
                 return await itx.response.send_message("\n".join(lines))
             rows = self.engine.resource_report()
