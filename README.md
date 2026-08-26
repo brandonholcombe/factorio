@@ -86,7 +86,7 @@ Commands (`/help` in-channel lists these too):
 | `/rollback 5..25` | confirm-button restore of the closest autosave |
 
 Automatic posts: joins/leaves, player deaths, heavy-wave summaries, breach
-alerts, server down/up, rocket launches, research completions, evolution
+alerts, server down/up, 8-hourly rocket summaries, research completions, evolution
 threshold crossings (25/50/75/90%), sustained UPS < 55, brownouts,
 tapped-resource low warnings, and a daily digest (8am Pacific).
 

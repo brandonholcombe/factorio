@@ -74,8 +74,19 @@ class IncidentEngine:
             "CREATE TABLE IF NOT EXISTS resource_history ("
             "at REAL, surface TEXT, name TEXT, amount REAL)"
         )
+        db.execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT)")
         db.commit()
         return db
+
+    def get_kv(self, key: str, default: str | None = None) -> str | None:
+        row = self.db.execute("SELECT value FROM kv WHERE key=?", (key,)).fetchone()
+        return row[0] if row else default
+
+    def set_kv(self, key: str, value: str) -> None:
+        self.db.execute(
+            "INSERT INTO kv (key, value) VALUES (?,?)"
+            " ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+        self.db.commit()
 
     def note(self, kind: str, detail: str = "") -> None:
         self.db.execute("INSERT INTO notes (at, kind, detail) VALUES (?,?,?)",

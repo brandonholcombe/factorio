@@ -44,6 +44,8 @@ WAVE_ALERT_THRESHOLD = int(os.environ.get("WAVE_ALERT_THRESHOLD", "25"))
 AUTO_PAUSE_ON_BREACH = os.environ.get("AUTO_PAUSE_ON_BREACH", "true").lower() == "true"
 
 ALERT_JOINS = os.environ.get("ALERT_JOINS", "true").lower() == "true"
+# Rocket launches are batched into one summary per window (not per launch).
+ROCKET_SUMMARY_S = float(os.environ.get("ROCKET_SUMMARY_S", "28800"))  # 8h
 
 # Mirrors the game's auto_pause server setting: with it on, an empty server
 # freezes ticks WITHOUT setting game.tick_paused, which must not read as

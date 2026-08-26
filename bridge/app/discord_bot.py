@@ -56,6 +56,7 @@ class BridgeBot(discord.Client):
         log.info("ready; alerting to #%s in %s", self.channel_.name, guild.name)
         asyncio.create_task(self._notify_loop())
         asyncio.create_task(self._digest_loop())
+        asyncio.create_task(self._rocket_summary_loop())
 
     def _server_empty(self) -> bool:
         s = self.poller.snapshot
@@ -123,9 +124,7 @@ class BridgeBot(discord.Client):
             elif kind == "server_up" and not in_rollback:
                 await self._send("✅ Server is back.", self.GREEN)
             elif kind == "rocket":
-                n = ev["total"]
-                prefix = "🚀🎉 **FIRST ROCKET LAUNCHED!**" if n == ev["delta"] else "🚀 Rocket launched!"
-                await self._send(f"{prefix} (total: {n})", self.PURPLE)
+                pass  # batched: _rocket_summary_loop posts one message per 8h window
             elif kind == "research_done":
                 await self._send(f"🔬 Research complete: **{ev['name']}**", self.BLUE)
             elif kind == "evolution":
@@ -149,6 +148,35 @@ class BridgeBot(discord.Client):
                     f"{ev['amount']:,.0f} left in tapped patches "
                     f"(**{ev['pct']:.0%}** of the {ev['peak']:,.0f} peak). "
                     "Time to scout a new patch.", self.AMBER)
+
+    async def _rocket_summary_loop(self):
+        """One rocket message per ROCKET_SUMMARY_S window instead of per
+        launch. Restart-proof: diffs the live total against the last total we
+        reported (kv), so no launch is ever lost or double-announced."""
+        while True:
+            await asyncio.sleep(600)
+            try:
+                snap = self.poller.snapshot
+                if not snap:
+                    continue
+                total = snap.get("rockets", 0)
+                reported = self.engine.get_kv("rockets_reported")
+                if reported is None:
+                    # First run: baseline silently so history isn't re-announced.
+                    self.engine.set_kv("rockets_reported", str(total))
+                    self.engine.set_kv("rockets_reported_at", str(time.time()))
+                    continue
+                last_at = float(self.engine.get_kv("rockets_reported_at", "0"))
+                delta = total - int(reported)
+                if delta > 0 and time.time() - last_at >= config.ROCKET_SUMMARY_S:
+                    hours = config.ROCKET_SUMMARY_S / 3600
+                    await self._send(
+                        f"🚀 **{delta} rocket{'s' if delta != 1 else ''} launched** "
+                        f"in the last {hours:.0f}h (total: {total:,})", self.PURPLE)
+                    self.engine.set_kv("rockets_reported", str(total))
+                    self.engine.set_kv("rockets_reported_at", str(time.time()))
+            except Exception:
+                log.exception("rocket summary failed")
 
     # --- daily digest ----------------------------------------------------
     async def _digest_loop(self):
