@@ -53,10 +53,11 @@ Discord ◀──gateway──  factorio-bridge (bholcombe/factorio-bridge)
   Freeze it deliberately with `/pause` in Discord. (If reverting to
   pause-when-empty, flip `auto_pause` AND the bridge's `GAME_AUTO_PAUSE`
   together.)
-- **Server auto-update**: CronJob every 30 min compares the Docker Hub
-  `stable` tag digest to the running pod and rolling-restarts on change
+- **Server auto-update**: CronJob daily at 4am Pacific compares the Docker
+  Hub `stable` tag digest to the running pod and rolling-restarts on change
   (digest compare avoids restart loops while Docker Hub lags factorio.com).
-  Steam auto-updates clients, so the server must track stable.
+  Steam auto-updates clients, so if a release blocks joins mid-day, anyone
+  can force the check with `/update` instead of waiting for 4am.
 - **Mod auto-update**: `UPDATE_MODS_ON_START=true` with factorio.com creds
   (`USERNAME`/`TOKEN` in the Secret) — mods re-sync to the server version on
   every boot, keeping them in lockstep across game updates.
