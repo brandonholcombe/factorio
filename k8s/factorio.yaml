@@ -114,7 +114,7 @@ spec:
             # later to enable Space Age — the existing save migrates, but every
             # player then needs the DLC.
             - name: DLC_SPACE_AGE
-              value: "false"
+              value: "true"
             # Update installed mods to match the server version on every boot.
             # Needs factorio.com creds (Secret) or the server refuses to start.
             - name: UPDATE_MODS_ON_START
@@ -182,8 +182,5 @@ spec:
         - name: settings
           secret:
             secretName: factorio-secrets
-        - name: mods-config
-          configMap:
-            name: factorio-mods
 # No Service: the container is exposed directly on the node via hostPort
 # (34197/udp). factorio.kodloki.io is an A record on the node's public IP.

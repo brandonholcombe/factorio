@@ -41,8 +41,10 @@ Discord ◀──gateway──  factorio-bridge (bholcombe/factorio-bridge)
 
 ## Game server
 
-- Base game, vanilla map, `DLC_SPACE_AGE=false` (the image force-manages
-  `mod-list.json` from that env — see Space Age below).
+- **Space Age enabled** (`DLC_SPACE_AGE=true`; the image force-manages
+  `mod-list.json` from that env). Every player needs the DLC to join. The
+  final pre-DLC world is archived at `pre-spaceage-divergence/` on the
+  backups volume and in `backups/` locally (divergence: 2026-08-26).
 - QoL mods (auto-synced to clients): Squeak Through 2, Bottleneck Lite,
   Rate Calculator (+flib), Even Distribution, Milestones, Todo List.
 - Settings live in the Secret as `server-settings.json`; an initContainer
@@ -164,13 +166,13 @@ full `server-settings.json`, factorio.com `USERNAME`/`TOKEN` (mod updates),
 discord.com/developers → Bot → Reset Token, paste, `kubectl apply`, restart
 the bridge.
 
-## Space Age (planned upgrade)
+## Space Age
 
-When everyone owns the DLC:
-1. `DLC_SPACE_AGE: "true"` in `k8s/factorio.yaml` (existing save migrates;
-   the reverse direction is lossy).
-2. Append the DLC turret types to `DEFENSE_ENTITIES` in the bridge ConfigMap.
-3. Commit, push; the bridge is already per-surface ("breach on Vulcanus").
+Enabled 2026-08-26 (save migrated from the base-game world; the reverse
+direction is lossy — restore the divergence archive instead). Bridge-side,
+loss classification is prototype-based (only 'player-creation' entities can
+be losses), so new DLC enemies/fauna can't false-alarm, and all polling is
+per-surface ("breach on Vulcanus").
 
 ## Known trade-offs
 

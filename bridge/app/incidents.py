@@ -93,20 +93,36 @@ class IncidentEngine:
                         (time.time(), kind, detail))
         self.db.commit()
 
-    @staticmethod
-    def classify(name: str) -> str:
+    # Entity names carrying the 'player-creation' flag, refreshed hourly from
+    # game prototypes. Anything else the enemy "kills" (their own units, DLC
+    # fauna, scenery) can't be a player loss — future-proof vs prefix lists.
+    _player_creation: set[str] = set()
+
+    def classify(self, name: str) -> str:
         if name in config.IGNORED_ENTITIES or name.startswith(config.IGNORED_PREFIXES):
             return "ignored"
         if name == config.CHARACTER_ENTITY:
             return "character"
+        if self._player_creation and name not in self._player_creation:
+            return "ignored"
         if name in config.DEFENSE_ENTITIES:
             return "defense"
-        # Unknown names count as production: fail-alarming, not fail-silent
-        # (matters when Space Age adds new entity types).
+        # Unknown player-creation names count as production: fail-alarming,
+        # not fail-silent (matters as Space Age adds new building types).
         return "production"
 
     async def run(self) -> None:
+        last_proto_refresh = 0.0
         while True:
+            if time.time() - last_proto_refresh > 3600:
+                try:
+                    names = await self.poller.entity_names()
+                    if names:
+                        self._player_creation = set(names)
+                    last_proto_refresh = time.time()
+                except Exception:
+                    log.exception("prototype refresh failed")
+                    last_proto_refresh = time.time() - 3300  # retry in ~5 min
             try:
                 event = await asyncio.wait_for(self.events_in.get(), timeout=15)
             except asyncio.TimeoutError:
